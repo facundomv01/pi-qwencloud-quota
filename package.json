@@ -1,0 +1,51 @@
+{
+	"name": "pi-qwencloud-quota",
+	"version": "0.1.0",
+	"description": "Pi extension that reports QwenCloud Token Plan consumption: local token usage aggregated from Pi session JSONL, wired into gentle-pi's native usage-source hook.",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"qwencloud",
+		"qwen-token-plan",
+		"usage",
+		"quota",
+		"tokens"
+	],
+	"license": "MIT",
+	"type": "module",
+	"main": "./index.ts",
+	"types": "./index.ts",
+	"exports": {
+		".": "./index.ts",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"index.ts",
+		"src",
+		"README.md"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/facun/pi-qwencloud-quota.git"
+	},
+	"bugs": {
+		"url": "https://github.com/facun/pi-qwencloud-quota/issues"
+	},
+	"homepage": "https://github.com/facun/pi-qwencloud-quota#readme",
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"engines": {
+		"node": ">=22.18.0"
+	},
+	"scripts": {
+		"test": "node --test \"test/**/*.test.ts\"",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"typescript": "^5.9.0"
+	}
+}

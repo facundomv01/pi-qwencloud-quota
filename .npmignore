@@ -1,0 +1,18 @@
+# The published tarball is defined by "files" in package.json; these entries
+# keep development-only material out of it as well.
+test/
+odd/
+.github/
+tsconfig.json
+.npmignore
+.gitignore
+node_modules/
+coverage/
+*.log
+.env
+.env.*
+*.pem
+*.key
+*credential*
+*credentials*
+auth.json

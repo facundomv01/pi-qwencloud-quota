@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Anything that could carry a credential. This package never writes one, and
+# these patterns exist so a local experiment can never be committed by accident.
+.env
+.env.*
+*.pem
+*.key
+*credential*
+*credentials*
+auth.json
+
+# Local Pi state
+.pi/
+
+# Logs and OS noise
+*.log
+coverage/
+.DS_Store
+Thumbs.db
