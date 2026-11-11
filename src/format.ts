@@ -18,3 +18,12 @@ export function formatShare(share: number): string {
 export function plural(count: number, singular: string): string {
 	return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
+
+/** Local wall-clock HH:MM, used only to render an exhaustion reset time. */
+export function formatClock(timestamp: number): string {
+	if (!Number.isFinite(timestamp)) return "unknown";
+	const date = new Date(timestamp);
+	const hours = `${date.getHours()}`.padStart(2, "0");
+	const minutes = `${date.getMinutes()}`.padStart(2, "0");
+	return `${hours}:${minutes}`;
+}

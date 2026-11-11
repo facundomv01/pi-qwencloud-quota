@@ -43,6 +43,19 @@ export interface PiUi {
 
 export interface PiActionContext {
 	ui: PiUi;
+	/** The event context also exposes the active model, so a 429 can be attributed. */
+	model?: { provider?: string };
+}
+
+/** Fired after a provider HTTP response arrives, before its stream is consumed. */
+export interface PiProviderResponseEvent {
+	type?: string;
+	status?: number;
+	/** Normalized response headers; only `retry-after` is ever read here. */
+	headers?: Record<string, unknown>;
+	provider?: string;
+	errorType?: string;
+	error?: { type?: string; code?: string };
 }
 
 export interface PiSessionStartEvent {
@@ -56,6 +69,10 @@ export interface PiCommandOptions {
 
 export interface PiApi {
 	on(event: "session_start", handler: (event: PiSessionStartEvent, ctx: PiActionContext) => void | Promise<void>): void;
+	on(
+		event: "after_provider_response",
+		handler: (event: PiProviderResponseEvent, ctx: PiActionContext) => void | Promise<void>,
+	): void;
 	registerCommand(name: string, options: PiCommandOptions): void;
 	events?: { emit(event: string, payload: unknown): void };
 }

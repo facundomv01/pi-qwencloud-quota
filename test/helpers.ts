@@ -63,6 +63,15 @@ export function nestedTurn(turn: TurnInput): string {
 	});
 }
 
+// A record whose `message` carries no `provider` at all. Pi always writes the
+// field today, but a missing one must bucket under `unknown` — never silently
+// under the token plan this package is named after.
+export function providerlessTurn(turn: TurnInput): string {
+	const record = JSON.parse(nestedTurn(turn)) as { message: Record<string, unknown> };
+	delete record.message.provider;
+	return JSON.stringify(record);
+}
+
 export function sessionRecord(timestamp: string, cwd: string): string {
 	return JSON.stringify({ type: "session", version: 3, id: `session-${cwd}`, timestamp, cwd });
 }
