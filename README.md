@@ -11,8 +11,11 @@ It has two routes. Only the first one ships today:
 
 ## What it does
 
-- Aggregates every assistant turn Pi recorded: fresh `input`, `output`, `cacheRead`, `cacheWrite`, `reasoning` and `totalTokens`, broken down by **day**, **model**, **source** (orchestrator vs subagent) and **project**.
+- Aggregates every assistant turn Pi recorded: fresh `input`, `output`, `cacheRead`, `cacheWrite`, `reasoning` and `totalTokens`, broken down by **day**, **model**, **provider**, **source** (orchestrator vs subagent) and **project**.
+- Attributes each turn by the `provider` field **the turn itself recorded** — never by catalogue membership, because the same model id can exist in several catalogues (`deepseek-v4-flash` is in both `nan` and `qwen-token-plan`). A turn with no provider lands under `unknown`.
 - Reports `cacheRead` as a share of total tokens. On real Token Plan sessions that ratio sits around **96–97%**, which is the single most decision-relevant number: almost all consumption is cached context, not fresh input.
+- Reports the **qwen-token-plan** figure separately from the **all providers** figure, each with its own explicit label. The plan figure is never the aggregate of every provider on disk.
+- Detects quota exhaustion from the provider's own `HTTP 429` + `Retry-After` response — the only quota signal that exists without credentials — and shows `exhausted · resets HH:MM` on the status row and in `/qwen-quota`.
 - Registers itself with gentle-pi's native usage-source hook (`gentle-pi:usage-source/v1`), so the provider appears in the shell's usage panel next to Codex, Claude and NaN.
 - Adds a slash command and a one-line status segment.
 
@@ -21,11 +24,18 @@ Route D works with **zero credentials and zero network access**: it reads local 
 ```
 / qwen-quota
 QwenCloud Token Plan · local token usage
-window: 2026-11-08 → 2026-11-09 · 2 sessions · 3 assistant turns
-total: 77.9k tok · cacheRead 50.7k (65.1%) · fresh input 26.8k · output 393 · cacheWrite 10 · reasoning 29
+window: 2026-11-07 → 2026-11-11 · 116 sessions · 6165 assistant turns (all providers)
+qwen-token-plan: 1.8M tok · cacheRead 1.6M (87.3%) · fresh input 150.2k · output 42.1k · cacheWrite 1.2k · reasoning 8.4k
+all providers: 917.0M tok · cacheRead 886.8M (96.7%) · local context only, not Qwen quota
+by provider:
+  nan             3401 turns · 620.4M tok · cacheRead 96.9%
+  openai-codex    2100 turns · 294.6M tok · cacheRead 96.2%
+  qwen-token-plan   59 turns · 1.8M tok · cacheRead 87.3%
 ...
 Credits: not configured · route B needs ALIBABA_CLOUD_ACCESS_KEY_ID + ALIBABA_CLOUD_ACCESS_KEY_SECRET
 ```
+
+That block shows the output's shape; the counts are illustrative and abridged with `...`.
 
 ## Install
 
@@ -52,10 +62,14 @@ The package declares its extension entry through the `pi.extensions` manifest in
 
 ## Use
 
-- `/qwen-quota` prints the full summary for the configured window.
-- A short status segment appears after `session_start` and after running the command:
-  `qwen local 881.3M tok · cacheRead 96.7%`.
-- In gentle-shell the provider shows up in the usage panel and `/gentle:usage` **when the session targets the `qwen-token-plan` provider** (the shell only refreshes providers in the current routing scope). The panel line carries the measured totals in the plan slot: `local 7d · 881.3M tok · cacheRead 96.7%`.
+- `/qwen-quota` prints the full summary for the configured window, including the per-provider breakdown sorted by tokens.
+- A short status segment appears after `session_start`, after a detected exhaustion and after running the command:
+  `qwen 1.8M tok · cacheRead 87.3%`.
+- In gentle-shell the provider shows up in the usage panel and `/gentle:usage` **when the session targets the `qwen-token-plan` provider** (the shell only refreshes providers in the current routing scope). The panel line carries the qwen figure first and the all-providers total behind its own label: `local 7d · 1.8M tok · cacheRead 87.3% · all providers 917.0M tok`.
+
+### Why two figures
+
+The first version of this package reported the aggregate of *every* local session under the `qwen-token-plan` name. The shell panel then read `qwen-token-plan · local 7d · 917.0M tok` while only ~1.8M tokens had actually gone through the token plan — the rest was `nan`, `openai-codex` and `claude-bridge` traffic. That is a dangerously wrong reading of a Qwen quota, so attribution is now taken from each record's own `provider` field and the two figures are labelled separately everywhere they appear.
 
 ## Configuration
 
@@ -79,8 +93,20 @@ Credits: route B recognised the credentials but is not implemented yet
 
 Scraping the QwenCloud console with browser cookies is deliberately **not** implemented — a hard constraint of the spec, not an oversight.
 
+## Quota exhaustion detection (zero credentials)
+
+The token-plan inference endpoint returns **no** quota or rate-limit headers, so remaining quota cannot be read from a successful response. The one real signal is the exhaustion response itself: a `429` with `Retry-After: <seconds>`.
+
+The extension registers `pi.on("after_provider_response")` and looks at exactly two things: the status and the `Retry-After` header. On a `429` from `qwen-token-plan` (or from a provider the hook cannot identify) it records the time, the provider and the derived reset time **in memory only**, then shows `exhausted · resets HH:MM`. The record disappears once the reset time passes; an exhaustion with no usable `Retry-After` shows `exhausted · resets unknown` and ages out after an hour.
+
+- A missing, malformed or negative `Retry-After` still records the exhaustion, with an unknown reset. It never throws.
+- A non-429 response never touches the recorded state, so a healthy request cannot silently clear a real exhaustion.
+- A 429 from a **different** provider is not recorded: the hook fires for every provider, and another provider's rate limit says nothing about Qwen quota. This mirrors the attribution rule above — the extension never looks up whether a model id also exists in the qwen catalogue.
+- No credential, request body or response body is read or stored. Nothing is written to disk.
+
 ## Honesty rules this package follows
 
+- **Attribution comes from the record, not from the catalogue.** A turn is qwen-token-plan only when its own `provider` field says so; a missing field is `unknown`; a shared model id proves nothing.
 - **No percentages of a quota that does not exist.** A Token Plan has no server-side quota window, so the usage-source payload claims no allowance: it emits one window-less limit with `limitReached: false` and puts the measured totals in `plan`. An honest `usedPercent` is impossible here, and a fabricated one would paint a fake gauge in the shell bar.
 - **No USD figures.** Every `qwen-token-plan` model carries `cost: {input: 0, output: 0, …}`, so any dollar amount would be invented.
 - **Read-only.** The package never writes to the session tree.
@@ -96,7 +122,7 @@ npm install       # only needed for the type check
 npm run typecheck
 ```
 
-Tests never read the real `~/.gentle-shell/agent` tree: every fixture lives in a fresh `mkdtemp` directory and is removed afterwards. Route D is verified against the real session shape (`{type:"message", message:{role:"assistant", usage:{…}}}` — a nested record, not a flat one).
+Tests never read the real `~/.gentle-shell/agent` tree: every fixture lives in a fresh `mkdtemp` directory and is removed afterwards. Route D is verified against the real session shape (`{type:"message", message:{role:"assistant", provider, usage:{…}}}` — a nested record, not a flat one).
 
 ## License
 
