@@ -1,5 +1,5 @@
 import { formatShare, formatTokens } from "./format.ts";
-import { aggregateSessions, resolveDays } from "./sessions.ts";
+import { aggregateSessions, providerBucket, resolveDays } from "./sessions.ts";
 import type { ProviderUsage, UsageSourcePayload } from "./types.ts";
 
 // The event gentle-shell subscribes to and validates (gentle-pi/lib/shell-usage.ts
@@ -18,9 +18,12 @@ export interface UsageSourceOptions {
 	now?: () => number;
 }
 
-export function planLine(totalTokens: number, cacheReadShare: number, days: number): string {
+// The plan slot carries two figures. The first is this provider's own turns;
+// the second is the all-providers total behind an explicit label, so the panel
+// can never present other providers' traffic as Qwen quota.
+export function planLine(totalTokens: number, cacheReadShare: number, days: number, allProvidersTokens: number): string {
 	const window = days > 0 ? `${days}d` : "all";
-	return `local ${window} · ${formatTokens(totalTokens)} tok · cacheRead ${formatShare(cacheReadShare)}`;
+	return `local ${window} · ${formatTokens(totalTokens)} tok · cacheRead ${formatShare(cacheReadShare)} · all providers ${formatTokens(allProvidersTokens)} tok`;
 }
 
 // Route D mapped onto the usage-source contract. There is no server-side quota
@@ -42,9 +45,13 @@ export function buildUsageSource(options: UsageSourceOptions = {}): UsageSourceP
 			try {
 				const aggregate = aggregateSessions({ agentDir: options.agentDir, days, env: options.env, now });
 				if (aggregate.turns === 0) return undefined;
+				// Attribute by the provider each record recorded. The aggregate counts
+				// every provider on disk; only the subset whose own `provider` field is
+				// this one belongs in the plan figure.
+				const qwen = providerBucket(aggregate, USAGE_PROVIDER);
 				return {
 					provider: USAGE_PROVIDER,
-					plan: planLine(aggregate.totals.totalTokens, aggregate.cacheReadShare, days),
+					plan: planLine(qwen?.totals.totalTokens ?? 0, qwen?.cacheReadShare ?? 0, days, aggregate.totals.totalTokens),
 					limits: [{ name: "local", windows: [], limitReached: false }],
 					fetchedAt: now,
 				};

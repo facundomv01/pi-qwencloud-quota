@@ -37,6 +37,14 @@ export interface Aggregate {
 	byModel: Bucket[];
 	bySource: Bucket[];
 	byProject: Bucket[];
+	/**
+	 * Bucketed by the `provider` the turn itself recorded — the only trustworthy
+	 * attribution signal. A turn without one lands under `unknown`, never under
+	 * the provider this package is about: the same model id can exist in several
+	 * catalogues (e.g. `deepseek-v4-flash` in both `nan` and `qwen-token-plan`),
+	 * so catalogue membership must never be used to attribute a turn.
+	 */
+	byProvider: Bucket[];
 	from: string | null;
 	to: string | null;
 }
@@ -277,6 +285,16 @@ function byTokensThenKey(a: Bucket, b: Bucket): number {
 	return a.key.localeCompare(b.key);
 }
 
+/**
+ * The single turn bucket for one provider, or undefined when that provider has
+ * no turn in the window. Callers that report a provider-specific figure (the
+ * usage-source plan, the status row, the qwen totals) must go through this
+ * instead of `aggregate.totals`, which counts every provider on disk.
+ */
+export function providerBucket(aggregate: Aggregate, provider: string): Bucket | undefined {
+	return aggregate.byProvider.find((bucket) => bucket.key === provider);
+}
+
 export function aggregateSessions(options: AggregateOptions = {}): Aggregate {
 	const agentDir = resolveAgentDir(options);
 	const days = options.days ?? 0;
@@ -288,6 +306,7 @@ export function aggregateSessions(options: AggregateOptions = {}): Aggregate {
 	const byModel = new Map<string, Bucket>();
 	const bySource = new Map<string, Bucket>();
 	const byProject = new Map<string, Bucket>();
+	const byProvider = new Map<string, Bucket>();
 	let turns = 0;
 	let sessions = 0;
 
@@ -307,6 +326,7 @@ export function aggregateSessions(options: AggregateOptions = {}): Aggregate {
 			addTo(byModel, turn.model, turn.usage);
 			addTo(bySource, file.source, turn.usage);
 			addTo(byProject, project, turn.usage);
+			addTo(byProvider, turn.provider, turn.usage);
 		}
 		if (countedInFile > 0) sessions += 1;
 	}
@@ -323,6 +343,7 @@ export function aggregateSessions(options: AggregateOptions = {}): Aggregate {
 		byModel: finalize(byModel).sort(byTokensThenKey),
 		bySource: finalize(bySource).sort(byTokensThenKey),
 		byProject: finalize(byProject).sort(byTokensThenKey),
+		byProvider: finalize(byProvider).sort(byTokensThenKey),
 		from: named.length > 0 ? named[0].key : null,
 		to: named.length > 0 ? named[named.length - 1].key : null,
 	};

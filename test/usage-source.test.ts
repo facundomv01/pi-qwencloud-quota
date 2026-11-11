@@ -6,7 +6,7 @@ import {
 	USAGE_SOURCE_SCHEMA,
 	buildUsageSource,
 } from "../src/usage-source.ts";
-import { KNOWN_NOW, makeAgentFixture, seedKnownAgent } from "./helpers.ts";
+import { KNOWN_NOW, makeAgentFixture, nestedTurn, seedKnownAgent, sessionRecord } from "./helpers.ts";
 
 // Encode the validators gentle-pi already applies to a usage source, so the
 // payload is checked against the real acceptance rules without importing
@@ -113,7 +113,7 @@ test("fetch resolves a ProviderUsage carrying raw token counts, never a fabricat
 		assert.ok(accepted);
 		assert.deepEqual(usage, {
 			provider: "qwen-token-plan",
-			plan: "local 7d · 77.9k tok · cacheRead 65.1%",
+			plan: "local 7d · 77.9k tok · cacheRead 65.1% · all providers 77.9k tok",
 			// No server-side quota exists for a token plan, so no allowance is claimed
 			// and no window invents a percentage or a reset time.
 			limits: [{ name: "local", windows: [], limitReached: false }],
@@ -122,6 +122,53 @@ test("fetch resolves a ProviderUsage carrying raw token counts, never a fabricat
 	} finally {
 		fixture.cleanup();
 	}
+});
+
+// Change A: the plan slot belongs to the qwen-token-plan subset only. The
+// all-providers figure is labelled so it can never be read as Qwen quota.
+test("the plan counts only qwen-token-plan turns and labels the all-providers total", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	fixture.write("sessions/--G--Proyectos-demo--/mixed.jsonl", [
+		sessionRecord("2026-11-09T09:00:00.000Z", "G:\\Proyectos\\demo"),
+		nestedTurn({
+			timestamp: "2026-11-09T10:00:00.000Z",
+			provider: "openai-codex",
+			model: "gpt-5.1-codex",
+			input: 2000,
+			output: 1000,
+			cacheRead: 197000,
+			cacheWrite: 0,
+			reasoning: 0,
+			totalTokens: 200000,
+		}),
+		nestedTurn({
+			timestamp: "2026-11-09T10:01:00.000Z",
+			provider: "qwen-token-plan",
+			model: "deepseek-v4-flash",
+			input: 100,
+			output: 50,
+			cacheRead: 850,
+			cacheWrite: 0,
+			reasoning: 0,
+			totalTokens: 1000,
+		}),
+	]);
+
+	const payload = buildUsageSource({ agentDir: fixture.dir, days: 7, now: () => KNOWN_NOW });
+	const usage = await payload.fetch(undefined, (() => {
+		throw new Error("route D must never touch the network");
+	}) as never, KNOWN_NOW);
+
+	assert.ok(usage);
+	assert.deepEqual(usage, {
+		provider: "qwen-token-plan",
+		// 1.0k is the qwen subset; the openai-codex record is excluded here and
+		// appears only behind the explicit `all providers` label.
+		plan: "local 7d · 1.0k tok · cacheRead 85.0% · all providers 201.0k tok",
+		limits: [{ name: "local", windows: [], limitReached: false }],
+		fetchedAt: KNOWN_NOW,
+	});
 });
 
 test("fetch resolves undefined when there is no local session data", async () => {

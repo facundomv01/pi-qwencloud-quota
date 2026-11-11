@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aggregateSessions } from "../src/sessions.ts";
-import { makeAgentFixture, nestedTurn, sessionRecord, toolResultRecord, userRecord } from "./helpers.ts";
+import { aggregateSessions, providerBucket } from "../src/sessions.ts";
+import {
+	makeAgentFixture,
+	nestedTurn,
+	providerlessTurn,
+	sessionRecord,
+	toolResultRecord,
+	userRecord,
+} from "./helpers.ts";
 
 const ORCHESTRATOR_DIR = "--G--Proyectos-demo--";
 
@@ -232,6 +239,133 @@ test("counts a flat role/usage record defensively", (t) => {
 	assert.equal(aggregate.cacheReadShare, 0);
 });
 
+// The correctness defect this unit fixes: the aggregate used to be reported as
+// if every local turn went through `qwen-token-plan`, so the usage panel showed
+// 917M tokens of total local traffic as the Qwen plan's consumption.
+test("buckets per provider and keeps another provider's turns out of the qwen plan", (t) => {
+	const fixture = makeAgentFixture();
+	fixture.write(`sessions/${ORCHESTRATOR_DIR}/mixed.jsonl`, [
+		sessionRecord("2026-11-09T09:00:00.000Z", "G:\\Proyectos\\demo"),
+		nestedTurn({
+			timestamp: "2026-11-09T10:00:00.000Z",
+			provider: "nan",
+			model: "deepseek-v4-flash",
+			input: 2000,
+			output: 1000,
+			cacheRead: 197000,
+			cacheWrite: 0,
+			reasoning: 0,
+			totalTokens: 200000,
+		}),
+		nestedTurn({
+			timestamp: "2026-11-09T10:01:00.000Z",
+			provider: "qwen-token-plan",
+			model: "deepseek-v4-flash",
+			input: 100,
+			output: 50,
+			cacheRead: 850,
+			cacheWrite: 0,
+			reasoning: 0,
+			totalTokens: 1000,
+		}),
+	]);
+	t.after(() => fixture.cleanup());
+
+	const aggregate = aggregateSessions({ agentDir: fixture.dir, days: 0 });
+
+	// Sorted by tokens desc, so the heavy non-Qwen traffic comes first.
+	assert.deepEqual(
+		aggregate.byProvider.map((bucket) => bucket.key),
+		["nan", "qwen-token-plan"],
+	);
+	assert.deepEqual(aggregate.byProvider[0].totals, {
+		input: 2000,
+		output: 1000,
+		cacheRead: 197000,
+		cacheWrite: 0,
+		reasoning: 0,
+		totalTokens: 200000,
+	});
+	assert.equal(aggregate.byProvider[0].turns, 1);
+	assert.deepEqual(aggregate.byProvider[1].totals, {
+		input: 100,
+		output: 50,
+		cacheRead: 850,
+		cacheWrite: 0,
+		reasoning: 0,
+		totalTokens: 1000,
+	});
+	assert.equal(aggregate.byProvider[1].turns, 1);
+
+	// The all-providers total still counts everything; only the qwen subset shrinks.
+	assert.equal(aggregate.totals.totalTokens, 201000);
+	const qwen = providerBucket(aggregate, "qwen-token-plan");
+	assert.ok(qwen);
+	assert.equal(qwen.turns, 1);
+	assert.equal(qwen.totals.totalTokens, 1000);
+	assert.equal(qwen.totals.cacheRead, 850);
+	assert.equal(qwen.cacheReadShare, 0.85);
+});
+
+test("buckets a record with no provider field under unknown, never under the qwen plan", (t) => {
+	const fixture = makeAgentFixture();
+	fixture.write(`sessions/${ORCHESTRATOR_DIR}/no-provider.jsonl`, [
+		sessionRecord("2026-11-09T09:00:00.000Z", "G:\\Proyectos\\demo"),
+		providerlessTurn({
+			timestamp: "2026-11-09T10:00:00.000Z",
+			model: "qwen3-coder-plus",
+			input: 100,
+			output: 20,
+			cacheRead: 0,
+			cacheWrite: 0,
+			reasoning: 5,
+			totalTokens: 120,
+		}),
+	]);
+	t.after(() => fixture.cleanup());
+
+	const aggregate = aggregateSessions({ agentDir: fixture.dir, days: 0 });
+
+	assert.deepEqual(
+		aggregate.byProvider.map((bucket) => bucket.key),
+		["unknown"],
+	);
+	assert.equal(providerBucket(aggregate, "unknown")?.turns, 1);
+	assert.equal(providerBucket(aggregate, "qwen-token-plan"), undefined);
+	assert.equal(aggregate.totals.totalTokens, 120);
+});
+
+// The ambiguity trap: `deepseek-v4-flash` is in both the `nan` and the
+// `qwen-token-plan` catalogues, so catalog membership must never attribute a
+// turn. Only the record's own `provider` field may.
+test("does not attribute a shared model id to the qwen plan when the record says nan", (t) => {
+	const fixture = makeAgentFixture();
+	fixture.write(`sessions/${ORCHESTRATOR_DIR}/trap.jsonl`, [
+		sessionRecord("2026-11-09T09:00:00.000Z", "G:\\Proyectos\\demo"),
+		nestedTurn({
+			timestamp: "2026-11-09T10:00:00.000Z",
+			provider: "nan",
+			model: "deepseek-v4-flash",
+			input: 10,
+			output: 5,
+			cacheRead: 900,
+			cacheWrite: 0,
+			reasoning: 0,
+			totalTokens: 915,
+		}),
+	]);
+	t.after(() => fixture.cleanup());
+
+	const aggregate = aggregateSessions({ agentDir: fixture.dir, days: 0 });
+
+	assert.deepEqual(
+		aggregate.byModel.map((bucket) => bucket.key),
+		["deepseek-v4-flash"],
+	);
+	assert.equal(providerBucket(aggregate, "qwen-token-plan"), undefined);
+	assert.equal(providerBucket(aggregate, "nan")?.turns, 1);
+});
+
 test("reports no data for a missing or empty agent directory", () => {
 	const missing = aggregateSessions({ agentDir: "/definitely/not/a/real/agent/dir", days: 7 });
 
@@ -250,6 +384,7 @@ test("reports no data for a missing or empty agent directory", () => {
 	assert.deepEqual(missing.byModel, []);
 	assert.deepEqual(missing.bySource, []);
 	assert.deepEqual(missing.byProject, []);
+	assert.deepEqual(missing.byProvider, []);
 	assert.equal(missing.from, null);
 	assert.equal(missing.to, null);
 
