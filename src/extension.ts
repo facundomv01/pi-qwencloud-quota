@@ -1,6 +1,7 @@
 import { aggregateSessions, resolveAgentDir, resolveDays } from "./sessions.ts";
+import { createExhaustionTracker } from "./exhaustion.ts";
 import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
-import type { PiApi, PiUi, PiActionContext } from "./types.ts";
+import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
 import { USAGE_SOURCE_EVENT, buildUsageSource } from "./usage-source.ts";
 
 export const COMMAND_NAME = "qwen-quota";
@@ -22,11 +23,12 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 	const agentDir = resolveAgentDir({ agentDir: options.agentDir, env });
 	const days = resolveDays({ days: options.days, env });
 	const clock = options.now ?? (() => Date.now());
+	const exhaustion = createExhaustionTracker(clock);
 
 	const refreshStatus = (ui: PiUi): void => {
 		try {
 			const aggregate = aggregateSessions({ agentDir, days, now: clock() });
-			ui.setStatus(STATUS_ID, renderStatusWidget(aggregate));
+			ui.setStatus(STATUS_ID, renderStatusWidget(aggregate, exhaustion.current()));
 		} catch {
 			// A status row is never worth an error in someone's session.
 		}
@@ -43,13 +45,27 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 		refreshStatus(ctx.ui);
 	});
 
+	// Change B: the 429 the provider returns is the only quota signal available
+	// without credentials, so it is the only thing this hook looks at. Nothing is
+	// written to disk, no body or credential is read, and a failure here can
+	// never reach the session.
+	pi.on("after_provider_response", (event: PiProviderResponseEvent, ctx: PiActionContext) => {
+		try {
+			const before = exhaustion.current();
+			const after = exhaustion.observe(event, ctx?.model?.provider);
+			if (after && after !== before) refreshStatus(ctx.ui);
+		} catch {
+			// Never reject into the shell.
+		}
+	});
+
 	pi.registerCommand(COMMAND_NAME, {
 		description: COMMAND_DESCRIPTION,
 		handler: async (_args: string, ctx: PiActionContext) => {
 			let message: string;
 			try {
 				const aggregate = aggregateSessions({ agentDir, days, now: clock() });
-				message = renderSummary(aggregate, { agentDir, days, env });
+				message = renderSummary(aggregate, { agentDir, days, env, exhaustion: exhaustion.current() });
 			} catch (error) {
 				message = `qwen-quota: could not read local sessions (${error instanceof Error ? error.message : "unknown error"})`;
 			}

@@ -1,6 +1,9 @@
 import { readCredits } from "./credits.ts";
-import { formatShare, formatTokens, plural } from "./format.ts";
+import type { ExhaustionRecord } from "./exhaustion.ts";
+import { formatClock, formatShare, formatTokens, plural } from "./format.ts";
+import { providerBucket } from "./sessions.ts";
 import type { Aggregate, Bucket } from "./sessions.ts";
+import { USAGE_PROVIDER } from "./usage-source.ts";
 
 export const STATUS_ID = "qwen-quota";
 export const SUMMARY_HEADER = "QwenCloud Token Plan · local token usage";
@@ -9,6 +12,13 @@ export interface SummaryOptions {
 	agentDir: string;
 	days: number;
 	env: Record<string, string | undefined>;
+	/** Recorded quota exhaustion, when one has been seen and has not aged out. */
+	exhaustion?: ExhaustionRecord;
+}
+
+/** `exhausted · resets HH:MM`, or an explicit unknown when Retry-After gave nothing usable. */
+export function renderExhaustion(record: ExhaustionRecord): string {
+	return record.resetAt === null ? "exhausted · resets unknown" : `exhausted · resets ${formatClock(record.resetAt)}`;
 }
 
 // Compact, human-readable and honest: token counts, the cacheRead ratio, and
@@ -26,13 +36,27 @@ export function renderSummary(aggregate: Aggregate, options: SummaryOptions): st
 	}
 
 	const totals = aggregate.totals;
+	const qwen = providerBucket(aggregate, USAGE_PROVIDER);
 	lines.push(
-		`window: ${aggregate.from ?? "unknown"} → ${aggregate.to ?? "unknown"} · ${plural(aggregate.sessions, "session")} · ${plural(aggregate.turns, "assistant turn")}`,
+		`window: ${aggregate.from ?? "unknown"} → ${aggregate.to ?? "unknown"} · ${plural(aggregate.sessions, "session")} · ${plural(aggregate.turns, "assistant turn")} (all providers)`,
+	);
+	// Two figures, two labels: the plan's own turns first, then every local turn
+	// as explicitly labelled context. Reporting the aggregate under the plan's
+	// name was the mislabelling defect this line exists to prevent.
+	if (qwen) {
+		lines.push(
+			`${USAGE_PROVIDER}: ${formatTokens(qwen.totals.totalTokens)} tok · cacheRead ${formatTokens(qwen.totals.cacheRead)} (${formatShare(qwen.cacheReadShare)}) · fresh input ${formatTokens(qwen.totals.input)} · output ${formatTokens(qwen.totals.output)} · cacheWrite ${formatTokens(qwen.totals.cacheWrite)} · reasoning ${formatTokens(qwen.totals.reasoning)}`,
+		);
+	} else {
+		lines.push(`${USAGE_PROVIDER}: no turns in this window`);
+	}
+	// Only ever the exhaustion the provider itself reported; nothing is inferred.
+	if (options.exhaustion) lines.push(renderExhaustion(options.exhaustion));
+	lines.push(
+		`all providers: ${formatTokens(totals.totalTokens)} tok · cacheRead ${formatTokens(totals.cacheRead)} (${formatShare(aggregate.cacheReadShare)}) · local context only, not Qwen quota`,
 	);
 	lines.push(
-		`total: ${formatTokens(totals.totalTokens)} tok · cacheRead ${formatTokens(totals.cacheRead)} (${formatShare(aggregate.cacheReadShare)}) · fresh input ${formatTokens(totals.input)} · output ${formatTokens(totals.output)} · cacheWrite ${formatTokens(totals.cacheWrite)} · reasoning ${formatTokens(totals.reasoning)}`,
-	);
-	lines.push(
+		...renderBuckets("by provider", aggregate.byProvider),
 		...renderBuckets("by source", aggregate.bySource),
 		...renderBuckets("by model", aggregate.byModel),
 		...renderBuckets("by day", aggregate.byDay),
@@ -57,8 +81,13 @@ function renderBuckets(title: string, buckets: readonly Bucket[]): string[] {
 }
 
 // Short enough for the shell's status row, and never a percentage of a quota
-// that does not exist: only measured counts and the cacheRead ratio.
-export function renderStatusWidget(aggregate: Aggregate): string | undefined {
+// that does not exist: only the qwen-token-plan subset's measured counts and
+// its cacheRead ratio. Other providers' traffic never rides in this segment —
+// that is exactly how the panel once showed 917M tokens of local traffic as
+// qwen-token-plan consumption.
+export function renderStatusWidget(aggregate: Aggregate, exhaustion?: ExhaustionRecord): string | undefined {
 	if (aggregate.turns === 0) return undefined;
-	return `qwen local ${formatTokens(aggregate.totals.totalTokens)} tok · cacheRead ${formatShare(aggregate.cacheReadShare)}`;
+	const qwen = providerBucket(aggregate, USAGE_PROVIDER);
+	const base = `qwen ${formatTokens(qwen?.totals.totalTokens ?? 0)} tok · cacheRead ${formatShare(qwen?.cacheReadShare ?? 0)}`;
+	return exhaustion ? `${base} · ${renderExhaustion(exhaustion)}` : base;
 }
