@@ -37,7 +37,8 @@ export interface UsageSourcePayload {
 // the package loads under jiti without resolving pi's own types.
 export interface PiUi {
 	setStatus(id: string, text: string | undefined): void;
-	setWidget(id: string, lines: string[] | undefined, options?: Record<string, unknown>): void;
+	/** Persistent panel content; `undefined` clears it. Mirrors `setWidget` in `pi-coding-agent/dist/core/extensions/types.d.ts:112`. */
+	setWidget(key: string, content: string[] | undefined, options?: unknown): void;
 	notify(message: string, level?: "info" | "warning" | "error" | "success"): void;
 }
 

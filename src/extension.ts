@@ -1,11 +1,30 @@
 import { aggregateSessions, resolveAgentDir, resolveDays } from "./sessions.ts";
+import type { Aggregate } from "./sessions.ts";
 import { createExhaustionTracker } from "./exhaustion.ts";
 import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
 import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
 import { USAGE_SOURCE_EVENT, buildUsageSource } from "./usage-source.ts";
 
+// A host-provided ui is only trusted when it actually carries the one method used
+// at activation time; anything else is treated as "no ui reachable".
+function isPiUi(value: unknown): value is PiUi {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		typeof (value as PiUi).setStatus === "function" &&
+		typeof (value as PiUi).setWidget === "function"
+	);
+}
+
 export const COMMAND_NAME = "qwen-quota";
 export const COMMAND_DESCRIPTION = "Show local QwenCloud Token Plan token usage";
+// Widget key for the persistent render. Stable on purpose: `setWidget` replaces
+// whatever sits under the same key, so a re-run refreshes instead of stacking.
+export const QUOTA_WIDGET_ID = "qwen-quota";
+// The toast is a pointer only. A multi-line table in `notify` flashes past on one
+// line and reads as "nothing printed", which is exactly the defect this replaces.
+export const QUOTA_WIDGET_HINT = "qwen-quota: summary in the quota widget";
+export const QUOTA_WIDGET_FAILED_HINT = "qwen-quota: could not render the quota widget";
 
 export interface QuotaOptions {
 	agentDir?: string;
@@ -25,23 +44,42 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 	const clock = options.now ?? (() => Date.now());
 	const exhaustion = createExhaustionTracker(clock);
 
+	const aggregate = (): Aggregate => aggregateSessions({ agentDir, days, now: clock() });
+
 	const refreshStatus = (ui: PiUi): void => {
 		try {
-			const aggregate = aggregateSessions({ agentDir, days, now: clock() });
-			ui.setStatus(STATUS_ID, renderStatusWidget(aggregate, exhaustion.current()));
+			ui.setStatus(STATUS_ID, renderStatusWidget(aggregate(), exhaustion.current()));
 		} catch {
 			// A status row is never worth an error in someone's session.
 		}
 	};
 
-	pi.on("session_start", (_event, ctx) => {
+	// Announcing the source is best-effort and self-contained: a failure here must
+	// never block activation, the hooks or the command registration below.
+	const announceUsageSource = (): void => {
 		try {
 			// Re-registering is a no-op in effect: gentle-shell replaces the source
-			// for the same provider, so emitting on every start is safe.
+			// for the same provider, so emitting more than once is safe.
 			pi.events?.emit(USAGE_SOURCE_EVENT, buildUsageSource({ agentDir, days, env }));
 		} catch {
 			// The command below still works without the hook.
 		}
+	};
+
+	// Defect fix 1: emit once at ACTIVATION, not only on `session_start`. A
+	// `/reload` re-activates this module without replaying `session_start`, so a
+	// start-only emit left the previously registered closure (built from the old
+	// module) in charge and the panel never updated.
+	announceUsageSource();
+
+	// The factory receives no `ctx`, and Pi's ExtensionAPI exposes no `ui`, so the
+	// status row can only be painted here when some host happens to expose one.
+	// When it does not, we skip in silence: never invent a ui object.
+	const activationUi = (pi as { ui?: unknown }).ui;
+	if (isPiUi(activationUi)) refreshStatus(activationUi);
+
+	pi.on("session_start", (_event, ctx) => {
+		announceUsageSource();
 		refreshStatus(ctx.ui);
 	});
 
@@ -64,12 +102,29 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 		handler: async (_args: string, ctx: PiActionContext) => {
 			let message: string;
 			try {
-				const aggregate = aggregateSessions({ agentDir, days, now: clock() });
-				message = renderSummary(aggregate, { agentDir, days, env, exhaustion: exhaustion.current() });
+				message = renderSummary(aggregate(), { agentDir, days, env, exhaustion: exhaustion.current() });
 			} catch (error) {
 				message = `qwen-quota: could not read local sessions (${error instanceof Error ? error.message : "unknown error"})`;
 			}
-			ctx.ui.notify(message, "info");
+
+			// Defect fix 2: render the table on the persistent surface. `notify` is a
+			// transient toast, so a table put there reads as "prints nothing". The
+			// widget replaces its previous content on every run; passing `undefined`
+			// for the same key is what clears it (types.d.ts `setWidget`).
+			let rendered = false;
+			try {
+				ctx.ui.setWidget(QUOTA_WIDGET_ID, message.split("\n"));
+				rendered = true;
+			} catch {
+				// A widget that cannot render must never reject into the session.
+			}
+
+			try {
+				// One line, always: a pointer at the widget, never the table itself.
+				ctx.ui.notify(rendered ? QUOTA_WIDGET_HINT : QUOTA_WIDGET_FAILED_HINT, "info");
+			} catch {
+				// Notify is best-effort too.
+			}
 		},
 	});
 }

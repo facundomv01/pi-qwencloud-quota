@@ -16,13 +16,14 @@ It has two routes. Only the first one ships today:
 - Reports `cacheRead` as a share of total tokens. On real Token Plan sessions that ratio sits around **96–97%**, which is the single most decision-relevant number: almost all consumption is cached context, not fresh input.
 - Reports the **qwen-token-plan** figure separately from the **all providers** figure, each with its own explicit label. The plan figure is never the aggregate of every provider on disk.
 - Detects quota exhaustion from the provider's own `HTTP 429` + `Retry-After` response — the only quota signal that exists without credentials — and shows `exhausted · resets HH:MM` on the status row and in `/qwen-quota`.
-- Registers itself with gentle-pi's native usage-source hook (`gentle-pi:usage-source/v1`), so the provider appears in the shell's usage panel next to Codex, Claude and NaN.
-- Adds a slash command and a one-line status segment.
+- Registers itself with gentle-pi's native usage-source hook (`gentle-pi:usage-source/v1`), so the provider appears in the shell's usage panel next to Codex, Claude and NaN. The source is announced **on activation and again on `session_start`**: a `/reload` re-activates the module without replaying `session_start`, and a start-only announce left the old module's closure in charge of the panel.
+- Adds a slash command that renders the full table into a **persistent widget** plus a one-line status segment.
 
 Route D works with **zero credentials and zero network access**: it reads local files only.
 
 ```
-/ qwen-quota
+/qwen-quota   →  renders this table into the quota widget
+
 QwenCloud Token Plan · local token usage
 window: 2026-11-07 → 2026-11-11 · 116 sessions · 6165 assistant turns (all providers)
 qwen-token-plan: 1.8M tok · cacheRead 1.6M (87.3%) · fresh input 150.2k · output 42.1k · cacheWrite 1.2k · reasoning 8.4k
@@ -62,10 +63,19 @@ The package declares its extension entry through the `pi.extensions` manifest in
 
 ## Use
 
-- `/qwen-quota` prints the full summary for the configured window, including the per-provider breakdown sorted by tokens.
-- A short status segment appears after `session_start`, after a detected exhaustion and after running the command:
+- `/qwen-quota` renders the full summary for the configured window — including the per-provider breakdown sorted by tokens — into a **persistent widget** above the editor, and shows a one-line pointer (`qwen-quota: summary in the quota widget`) as a toast.
+- A short status segment appears after `session_start` and after a detected exhaustion:
   `qwen 1.8M tok · cacheRead 87.3%`.
 - In gentle-shell the provider shows up in the usage panel and `/gentle:usage` **when the session targets the `qwen-token-plan` provider** (the shell only refreshes providers in the current routing scope). The panel line carries the qwen figure first and the all-providers total behind its own label: `local 7d · 1.8M tok · cacheRead 87.3% · all providers 917.0M tok`.
+
+### Why a widget and not a toast
+
+The first version rendered the whole table through `ctx.ui.notify(message, "info")`. A multi-line table in a toast flashes past on a single line and reads as **"prints nothing"**, which is how it was reported in a running shell. The table now goes to `ctx.ui.setWidget("qwen-quota", lines)` — the persistent, line-based surface — and `notify` carries one short pointer line instead.
+
+- Re-running `/qwen-quota` **replaces** the widget: it always writes the same key, and Pi swaps whatever sits under it.
+- Passing `undefined` for that key clears it (`setWidget("qwen-quota", undefined)`); that is the API-level way to remove it. Pi itself calls `clearExtensionWidgets()` from `resetExtensionUI()`, which runs before a `/reload` and when the session is invalidated.
+- Pi caps a widget at **10 lines** and appends `... (widget truncated)`. The head of the table (window, plan figure, all-providers figure, per-provider and per-source rows) is what fits; the per-model, per-day and per-project tables and the `Credits:` line fall past the cap.
+- If `setWidget` throws, the failure is swallowed (never rejected into the session) and the toast says `qwen-quota: could not render the quota widget` instead of pointing at a panel that is not there.
 
 ### Why two figures
 

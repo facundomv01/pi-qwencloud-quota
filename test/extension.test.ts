@@ -16,8 +16,10 @@ interface FakePi {
 	ui: {
 		statuses: Array<{ id: string; text: string | undefined }>;
 		notifications: Array<{ message: string; level: string | undefined }>;
-		widgets: unknown[];
+		widgets: Array<{ id: string; content: string[] | undefined }>;
 	};
+	/** Every ui call in the order the extension made it. */
+	calls: string[];
 	ctx: unknown;
 }
 
@@ -27,18 +29,22 @@ function fakePi(): FakePi {
 	const emitted: Array<{ event: string; payload: unknown }> = [];
 	const statuses: Array<{ id: string; text: string | undefined }> = [];
 	const notifications: Array<{ message: string; level: string | undefined }> = [];
-	const widgets: unknown[] = [];
+	const widgets: Array<{ id: string; content: string[] | undefined }> = [];
+	const calls: string[] = [];
 	const ui = {
 		statuses,
 		notifications,
 		widgets,
 		setStatus(id: string, text: string | undefined) {
+			calls.push(`setStatus ${id}`);
 			statuses.push({ id, text });
 		},
-		setWidget(id: string, content: unknown) {
+		setWidget(id: string, content: string[] | undefined) {
+			calls.push(`setWidget ${id}`);
 			widgets.push({ id, content });
 		},
 		notify(message: string, level: string | undefined) {
+			calls.push(`notify ${level ?? "info"}`);
 			notifications.push({ message, level });
 		},
 	};
@@ -47,6 +53,7 @@ function fakePi(): FakePi {
 		handlers,
 		emitted,
 		ui,
+		calls,
 		ctx: { ui },
 		pi: {
 			on(name, handler) {
@@ -57,6 +64,7 @@ function fakePi(): FakePi {
 			},
 			events: {
 				emit(event, payload) {
+					calls.push(`emit ${event}`);
 					emitted.push({ event, payload });
 				},
 			},
@@ -64,7 +72,7 @@ function fakePi(): FakePi {
 	};
 }
 
-test("registers /qwen-quota and prints the exact summary for a known fixture", async (t) => {
+test("registers /qwen-quota and renders the exact summary into the persistent widget", async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 	seedKnownAgent(fixture);
@@ -78,10 +86,12 @@ test("registers /qwen-quota and prints the exact summary for a known fixture", a
 
 	await command.handler("", fake.ctx);
 
-	assert.equal(fake.ui.notifications.length, 1);
-	assert.equal(fake.ui.notifications[0].level, "info");
-	assert.equal(
-		fake.ui.notifications[0].message,
+	// The table goes to the widget: a multi-line toast renders as a flash of text
+	// and was the reason /qwen-quota read as "prints nothing".
+	assert.equal(fake.ui.widgets.length, 1);
+	assert.equal(fake.ui.widgets[0].id, "qwen-quota");
+	assert.deepEqual(
+		fake.ui.widgets[0].content,
 		[
 			"QwenCloud Token Plan · local token usage",
 			"window: 2026-11-08 → 2026-11-09 · 2 sessions · 3 assistant turns (all providers)",
@@ -102,11 +112,105 @@ test("registers /qwen-quota and prints the exact summary for a known fixture", a
 			"  agent 1 1 turn  · 45.1k tok · cacheRead 88.7%",
 			"  demo    2 turns · 32.8k tok · cacheRead 32.7%",
 			"Credits: not configured · route B needs ALIBABA_CLOUD_ACCESS_KEY_ID + ALIBABA_CLOUD_ACCESS_KEY_SECRET",
-		].join("\n"),
+		],
 	);
+
+	// `notify` stays, but only as a one-line pointer at the widget.
+	assert.equal(fake.ui.notifications.length, 1);
+	assert.equal(fake.ui.notifications[0].level, "info");
+	assert.ok(!fake.ui.notifications[0].message.includes("\n"), "the toast is a single line");
+	assert.ok(fake.ui.notifications[0].message.length <= 80);
 });
 
-test("session_start emits the usage source and sets the compact status", async (t) => {
+test("renders an empty agent dir into a widget instead of only a toast", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+
+	const fake = fakePi();
+	registerQuotaExtension(fake.pi as never, {
+		days: 7,
+		env: { PI_QWENCLOUD_AGENT_DIR: `${fixture.dir}/missing` },
+		now: () => KNOWN_NOW,
+	});
+
+	const command = fake.commands.get("qwen-quota");
+	assert.ok(command);
+	await command.handler("", fake.ctx);
+
+	const content = fake.ui.widgets[0]?.content ?? [];
+	assert.ok(content.some((line) => /no local session data yet/.test(line)));
+	assert.ok(!/no local session data yet/.test(fake.ui.notifications[0].message));
+});
+
+test("activation emits the usage source without waiting for session_start", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const fake = fakePi();
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 7, env: {}, now: () => KNOWN_NOW });
+
+	// The mock never fires session_start. A `/reload` re-activates this module
+	// without replaying that event, so activation alone must announce the source;
+	// otherwise the previously registered closure from the old module stays in
+	// charge and the panel never updates.
+	const sources = fake.emitted.filter((entry) => entry.event === USAGE_SOURCE_EVENT);
+	assert.equal(sources.length, 1);
+	const payload = sources[0].payload as Record<string, unknown>;
+	assert.equal(payload.schema, USAGE_SOURCE_SCHEMA);
+	assert.equal(payload.provider, USAGE_PROVIDER);
+	// The factory receives no ui, so there is nothing to refresh and nothing is invented.
+	assert.deepEqual(fake.calls, [`emit ${USAGE_SOURCE_EVENT}`]);
+});
+
+test("activation refreshes the status row when a ui is reachable", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const fake = fakePi();
+	registerQuotaExtension({ ...fake.pi, ui: fake.ui } as never, {
+		agentDir: fixture.dir,
+		days: 0,
+		env: {},
+		now: () => KNOWN_NOW,
+	});
+
+	assert.deepEqual(fake.calls, [`emit ${USAGE_SOURCE_EVENT}`, "setStatus qwen-quota"]);
+	assert.deepEqual(fake.ui.statuses, [{ id: "qwen-quota", text: "qwen 77.9k tok · cacheRead 65.1%" }]);
+});
+
+test("a failing setWidget never rejects the command handler", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const fake = fakePi();
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW });
+	const command = fake.commands.get("qwen-quota");
+	assert.ok(command);
+
+	const notifications: string[] = [];
+	const failingCtx = {
+		ui: {
+			setStatus() {},
+			setWidget() {
+				throw new Error("widget unavailable");
+			},
+			notify(message: string) {
+				notifications.push(message);
+			},
+		},
+	};
+
+	await assert.doesNotReject(async () => command.handler("", failingCtx));
+	// The pointer still reaches the user, and it never claims a widget that failed.
+	assert.equal(notifications.length, 1);
+	assert.ok(!notifications[0].includes("\n"));
+	assert.ok(notifications[0].length <= 80);
+});
+
+test("session_start re-emits the usage source and sets the compact status", async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 	seedKnownAgent(fixture);
@@ -116,13 +220,17 @@ test("session_start emits the usage source and sets the compact status", async (
 
 	const onSessionStart = fake.handlers.get("session_start");
 	assert.ok(onSessionStart, "session_start is handled");
+	// Activation already emitted once; the event emits again on session_start so a
+	// reloaded session rebinds against the current module's closure.
 	await onSessionStart({ reason: "startup" }, fake.ctx);
 
-	assert.equal(fake.emitted.length, 1);
-	assert.equal(fake.emitted[0].event, USAGE_SOURCE_EVENT);
-	const payload = fake.emitted[0].payload as Record<string, unknown>;
-	assert.equal(payload.schema, USAGE_SOURCE_SCHEMA);
-	assert.equal(payload.provider, USAGE_PROVIDER);
+	assert.equal(fake.emitted.length, 2);
+	for (const entry of fake.emitted) {
+		assert.equal(entry.event, USAGE_SOURCE_EVENT);
+		const payload = entry.payload as Record<string, unknown>;
+		assert.equal(payload.schema, USAGE_SOURCE_SCHEMA);
+		assert.equal(payload.provider, USAGE_PROVIDER);
+	}
 
 	assert.deepEqual(fake.ui.statuses, [{ id: "qwen-quota", text: "qwen 77.9k tok · cacheRead 65.1%" }]);
 });
@@ -144,14 +252,14 @@ test("degrades silently with no credentials and no session data", async (t) => {
 	await command.handler("", fake.ctx);
 	assert.equal(fake.ui.notifications.length, 1);
 	assert.equal(fake.ui.notifications[0].level, "info");
-	assert.match(fake.ui.notifications[0].message, /no local session data yet/);
+	assert.ok((fake.ui.widgets[0]?.content ?? []).some((line) => /no local session data yet/.test(line)));
 
 	const onSessionStart = fake.handlers.get("session_start");
 	assert.ok(onSessionStart);
 	await onSessionStart({ reason: "startup" }, fake.ctx);
 	// No data: the status is cleared, never a stale or invented figure.
 	assert.deepEqual(fake.ui.statuses, [{ id: "qwen-quota", text: undefined }]);
-	assert.equal(fake.emitted.length, 1);
+	assert.equal(fake.emitted.length, 2);
 });
 
 test("the package entry exports a Pi factory that registers the extension", async () => {	const entry = await import("../index.ts");
@@ -193,11 +301,12 @@ test("records a provider 429 and surfaces the exhaustion without throwing", asyn
 	assert.match(status, /^qwen 77\.9k tok · cacheRead 65\.1% · exhausted · resets \d{2}:\d{2}$/);
 	assert.ok(status.length <= 60);
 
-	// /qwen-quota shows the same state on its own line.
+	// /qwen-quota shows the same state on its own line in the widget.
 	const command = fake.commands.get("qwen-quota");
 	assert.ok(command);
 	await command.handler("", fake.ctx);
-	assert.match(fake.ui.notifications[0].message, /^exhausted · resets \d{2}:\d{2}$/m);
+	const content = fake.ui.widgets[0]?.content ?? [];
+	assert.ok(content.some((line) => /^exhausted · resets \d{2}:\d{2}$/.test(line)));
 
 	// A later healthy response does not clear it or rewrite the status row.
 	await onResponse({ status: 200, headers: {} }, qwenCtx);
