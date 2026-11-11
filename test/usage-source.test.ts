@@ -78,8 +78,10 @@ test("the emitted payload passes gentle-pi's usage-source validation", () => {
 		assert.equal(typeof payload.fetch, "function");
 		assert.equal(typeof payload.pendingNote, "string");
 		// The Credits figure is route B's job; the note has to say so.
-		assert.match(payload.pendingNote, /route B/);
-		assert.match(payload.pendingNote, /Credits/);
+		const pendingNote = payload.pendingNote;
+		if (typeof pendingNote !== "string") assert.fail("pendingNote must be a string");
+		assert.match(pendingNote, /route B/);
+		assert.match(pendingNote, /Credits/);
 		// The real validator the shell runs on the event payload.
 		assert.ok(parseUsageSourceLike(payload));
 		// The validator is not a rubber stamp: a NaN percentage is rejected.
