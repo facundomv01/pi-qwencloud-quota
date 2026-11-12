@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 
@@ -55,6 +55,8 @@ export interface AggregateOptions {
 	days?: number;
 	now?: number;
 	env?: Record<string, string | undefined>;
+	/** Home override for agent-dir detection (tests; defaults to os.homedir()). */
+	home?: string;
 }
 
 export interface ParsedTurn {
@@ -77,7 +79,17 @@ export function resolveAgentDir(options: AggregateOptions = {}): string {
 	const env = options.env ?? process.env;
 	const configured = options.agentDir ?? env[AGENT_DIR_ENV];
 	if (typeof configured === "string" && configured.trim().length > 0) return configured.trim();
-	return join(homedir(), ".gentle-shell", "agent");
+	// No explicit dir: this package targets Pi in general, not only gentle-shell.
+	// gentle-shell keeps sessions under ~/.gentle-shell/agent, plain Pi under
+	// ~/.pi/agent. Prefer whichever exists (gentle-shell wins a tie, because
+	// the usage-source hook and the tuned panel live there); when neither
+	// exists yet, fall back to the plain-Pi standard location.
+	const home = options.home ?? homedir();
+	const gentleShell = join(home, ".gentle-shell", "agent");
+	const plainPi = join(home, ".pi", "agent");
+	if (existsSync(gentleShell)) return gentleShell;
+	if (existsSync(plainPi)) return plainPi;
+	return plainPi;
 }
 
 export function resolveDays(options: { days?: number; env?: Record<string, string | undefined> } = {}): number {

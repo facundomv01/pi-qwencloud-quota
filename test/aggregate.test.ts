@@ -416,3 +416,35 @@ test("windows the aggregate to the last N local days", (t) => {
 		["2026-11-09"],
 	);
 });
+
+// resolveAgentDir default for a general Pi audience: gentle-shell keeps its
+// agent dir, plain Pi uses ~/.pi/agent. The default must follow whichever
+// actually exists, and explicit configuration must always win.
+test("resolveAgentDir prefers an existing gentle-shell dir, then an existing .pi dir", async (t) => {
+	const { resolveAgentDir } = await import("../src/sessions.ts");
+	const { mkdtempSync, mkdirSync, rmSync } = await import("node:fs");
+	const { join } = await import("node:path");
+	const { tmpdir } = await import("node:os");
+	const home = mkdtempSync(join(tmpdir(), "qwen-home-"));
+	t.after(() => rmSync(home, { recursive: true, force: true }));
+
+	const piDir = join(home, ".pi", "agent");
+	const gsDir = join(home, ".gentle-shell", "agent");
+
+	// explicit option wins over everything
+	assert.equal(resolveAgentDir({ agentDir: "/somewhere/else", env: {} }), "/somewhere/else");
+
+	// env wins over detection
+	assert.equal(resolveAgentDir({ env: { PI_QWENCLOUD_AGENT_DIR: "/env/dir" } }), "/env/dir");
+
+	// neither exists yet: the plain-Pi standard location is the default
+	assert.equal(resolveAgentDir({ env: {}, home }), piDir);
+
+	// only .pi exists -> .pi
+	mkdirSync(piDir, { recursive: true });
+	assert.equal(resolveAgentDir({ env: {}, home }), piDir);
+
+	// both exist -> gentle-shell wins (it is the tuned host)
+	mkdirSync(gsDir, { recursive: true });
+	assert.equal(resolveAgentDir({ env: {}, home }), gsDir);
+});

@@ -104,7 +104,7 @@ Toda la configuración es por variables de entorno. Nada se lee del disco salvo 
 
 | Variable | Ruta | Default | Significado |
 |---|---|---|---|
-| `PI_QWENCLOUD_AGENT_DIR` | D | `~/.gentle-shell/agent` | Directorio de agente de Pi. Lee `<dir>/sessions/<slug>/*.jsonl` (orquestador) y `<dir>/gentle-agents/sessions/*.jsonl` (subagentes). |
+| `PI_QWENCLOUD_AGENT_DIR` | D | autodetect | Directorio de agente de Pi. Por defecto: `~/.gentle-shell/agent` si existe (gentle-shell); si no, `~/.pi/agent` (Pi a secas). Lee `<dir>/sessions/<slug>/*.jsonl` (orquestador) y `<dir>/gentle-agents/sessions/*.jsonl` (subagentes). |
 | `PI_QWENCLOUD_QUOTA_DAYS` | D | `7` | Ventana en días calendario locales. `0` agrega todos los archivos de sesión del disco. |
 | `ALIBABA_CLOUD_ACCESS_KEY_ID` | B | — | AccessKey ID de RAM (solo lectura). |
 | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | B | — | Secret correspondiente. |
