@@ -46,6 +46,30 @@ function recordingFetch(body: unknown, responseInit?: { status?: number; content
 	return { requests, fetchFn };
 }
 
+test("a malformed region can only change the host, and the URL stays https", async () => {
+	for (const region of ["http://evil.example", "cn-hangzhou/x", "\tcn", ""]) {
+		const { requests, fetchFn } = recordingFetch({ Success: true, Data: { Items: [] } });
+		const snapshot = await fetchCredits({ ...ENV, [CREDITS_REGION_ENV]: region }, { ...DEPS, fetchFn });
+		assert.ok(requests[0].url.startsWith("https://"), `region ${JSON.stringify(region)} must stay https`);
+		assert.ok(!snapshot.message.includes(SK));
+	}
+});
+
+test("an injected dep resolving to a non-object degrades instead of throwing", async () => {
+	await assert.doesNotReject(fetchCredits(ENV, { ...DEPS, fetchFn: (async () => undefined) as unknown as typeof fetch }));
+	const snapshot = await fetchCredits(ENV, { ...DEPS, fetchFn: (async () => undefined) as unknown as typeof fetch });
+	assert.match(snapshot.message, /query failed/);
+});
+
+test("a thrown non-Error carrying the secret never leaks it into the message", async () => {
+	const fetchFn = (async () => {
+		throw `${SK} connection refused`;
+	}) as unknown as typeof fetch;
+	const snapshot = await fetchCredits(ENV, { ...DEPS, fetchFn });
+	assert.match(snapshot.message, /query failed/);
+	assert.ok(!snapshot.message.includes(SK));
+});
+
 const DEPS = { now: () => NOW, nonce: () => NONCE };
 
 test("missing credentials degrade silently: no fetch, no throw, message names the env vars", async () => {

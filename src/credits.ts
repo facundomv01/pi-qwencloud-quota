@@ -209,21 +209,25 @@ export async function fetchCredits(
 		// dropped entirely. The one-line message carries no detail at all.
 		return failureSnapshot("network error");
 	}
+	// An injected dep may resolve to a non-object; reading it must not throw —
+	// the session-facing guarantee is that fetchCredits never rejects.
+	const status = typeof response?.status === "number" ? response.status : undefined;
+	if (status === undefined) return failureSnapshot("network error");
 	let text: string;
 	try {
 		text = await response.text();
 	} catch {
-		return failureSnapshot(`HTTP ${response.status}`);
+		return failureSnapshot(`HTTP ${status}`);
 	}
 	let body: StatsBody | undefined;
 	try {
 		body = JSON.parse(text) as StatsBody;
 	} catch {
-		return failureSnapshot(`HTTP ${response.status}`);
+		return failureSnapshot(`HTTP ${status}`);
 	}
 	if (!response.ok || body?.Success === false) {
 		const code = typeof body?.Code === "string" && body.Code.length > 0 ? ` ${body.Code}` : "";
-		return failureSnapshot(`HTTP ${response.status}${code}`);
+		return failureSnapshot(`HTTP ${status}${code}`);
 	}
 	const items = Array.isArray(body?.Data?.Items) ? (body.Data.Items as SeatItem[]) : [];
 	if (items.length === 0) {
