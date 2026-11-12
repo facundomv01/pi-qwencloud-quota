@@ -4,6 +4,7 @@ import { createExhaustionTracker } from "./exhaustion.ts";
 import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
 import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
 import { USAGE_SOURCE_EVENT, buildUsageSource } from "./usage-source.ts";
+import { createQuotaModal } from "./quota-modal.ts";
 
 // A host-provided ui is only trusted when it actually carries the one method used
 // at activation time; anything else is treated as "no ui reachable".
@@ -18,13 +19,8 @@ function isPiUi(value: unknown): value is PiUi {
 
 export const COMMAND_NAME = "qwen-quota";
 export const COMMAND_DESCRIPTION = "Show local QwenCloud Token Plan token usage";
-// Widget key for the persistent render. Stable on purpose: `setWidget` replaces
-// whatever sits under the same key, so a re-run refreshes instead of stacking.
+// Clear the widget left by older versions when opening the modal.
 export const QUOTA_WIDGET_ID = "qwen-quota";
-// The toast is a pointer only. A multi-line table in `notify` flashes past on one
-// line and reads as "nothing printed", which is exactly the defect this replaces.
-export const QUOTA_WIDGET_HINT = "qwen-quota: summary in the quota widget";
-export const QUOTA_WIDGET_FAILED_HINT = "qwen-quota: could not render the quota widget";
 
 export interface QuotaOptions {
 	agentDir?: string;
@@ -107,23 +103,15 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 				message = `qwen-quota: could not read local sessions (${error instanceof Error ? error.message : "unknown error"})`;
 			}
 
-			// Defect fix 2: render the table on the persistent surface. `notify` is a
-			// transient toast, so a table put there reads as "prints nothing". The
-			// widget replaces its previous content on every run; passing `undefined`
-			// for the same key is what clears it (types.d.ts `setWidget`).
-			let rendered = false;
 			try {
-				ctx.ui.setWidget(QUOTA_WIDGET_ID, message.split("\n"));
-				rendered = true;
+				ctx.ui.setWidget(QUOTA_WIDGET_ID, undefined);
 			} catch {
-				// A widget that cannot render must never reject into the session.
+				// A stale widget must not prevent opening the modal.
 			}
-
 			try {
-				// One line, always: a pointer at the widget, never the table itself.
-				ctx.ui.notify(rendered ? QUOTA_WIDGET_HINT : QUOTA_WIDGET_FAILED_HINT, "info");
+				await ctx.ui.custom<void>((tui, _theme, keys, done) => createQuotaModal(tui, keys, () => done(), message), { overlay: true });
 			} catch {
-				// Notify is best-effort too.
+				try { ctx.ui.notify("qwen-quota: could not open the quota modal", "error"); } catch { /* best effort */ }
 			}
 		},
 	});

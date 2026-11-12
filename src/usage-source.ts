@@ -18,12 +18,10 @@ export interface UsageSourceOptions {
 	now?: () => number;
 }
 
-// The plan slot carries two figures. The first is this provider's own turns;
-// the second is the all-providers total behind an explicit label, so the panel
-// can never present other providers' traffic as Qwen quota.
-export function planLine(totalTokens: number, cacheReadShare: number, days: number, allProvidersTokens: number): string {
+// The provider row shows only its own local traffic, never a quota gauge.
+export function planLine(totalTokens: number, cacheReadShare: number, days: number): string {
 	const window = days > 0 ? `${days}d` : "all";
-	return `local ${window} · ${formatTokens(totalTokens)} tok · cacheRead ${formatShare(cacheReadShare)} · all providers ${formatTokens(allProvidersTokens)} tok`;
+	return `local ${window} · ${formatTokens(totalTokens)} tok · cache read ${formatShare(cacheReadShare)} · not quota`;
 }
 
 // Route D mapped onto the usage-source contract. There is no server-side quota
@@ -51,7 +49,7 @@ export function buildUsageSource(options: UsageSourceOptions = {}): UsageSourceP
 				const qwen = providerBucket(aggregate, USAGE_PROVIDER);
 				return {
 					provider: USAGE_PROVIDER,
-					plan: planLine(qwen?.totals.totalTokens ?? 0, qwen?.cacheReadShare ?? 0, days, aggregate.totals.totalTokens),
+					plan: planLine(qwen?.totals.totalTokens ?? 0, qwen?.cacheReadShare ?? 0, days),
 					limits: [{ name: "local", windows: [], limitReached: false }],
 					fetchedAt: now,
 				};

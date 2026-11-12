@@ -113,7 +113,7 @@ test("fetch resolves a ProviderUsage carrying raw token counts, never a fabricat
 		assert.ok(accepted);
 		assert.deepEqual(usage, {
 			provider: "qwen-token-plan",
-			plan: "local 7d · 77.9k tok · cacheRead 65.1% · all providers 77.9k tok",
+			plan: "local 7d · 77.9k tok · cache read 65.1% · not quota",
 			// No server-side quota exists for a token plan, so no allowance is claimed
 			// and no window invents a percentage or a reset time.
 			limits: [{ name: "local", windows: [], limitReached: false }],
@@ -124,9 +124,8 @@ test("fetch resolves a ProviderUsage carrying raw token counts, never a fabricat
 	}
 });
 
-// Change A: the plan slot belongs to the qwen-token-plan subset only. The
-// all-providers figure is labelled so it can never be read as Qwen quota.
-test("the plan counts only qwen-token-plan turns and labels the all-providers total", async (t) => {
+// The compact panel row belongs to Qwen only; other providers remain in the modal.
+test("the plan counts only qwen-token-plan turns and identifies local usage as not quota", async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 	fixture.write("sessions/--G--Proyectos-demo--/mixed.jsonl", [
@@ -163,9 +162,8 @@ test("the plan counts only qwen-token-plan turns and labels the all-providers to
 	assert.ok(usage);
 	assert.deepEqual(usage, {
 		provider: "qwen-token-plan",
-		// 1.0k is the qwen subset; the openai-codex record is excluded here and
-		// appears only behind the explicit `all providers` label.
-		plan: "local 7d · 1.0k tok · cacheRead 85.0% · all providers 201.0k tok",
+		// The openai-codex record is excluded from the compact Qwen row.
+		plan: "local 7d · 1.0k tok · cache read 85.0% · not quota",
 		limits: [{ name: "local", windows: [], limitReached: false }],
 		fetchedAt: KNOWN_NOW,
 	});

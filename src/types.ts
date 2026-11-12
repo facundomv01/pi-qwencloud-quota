@@ -35,7 +35,16 @@ export interface UsageSourcePayload {
 
 // The slices of Pi's ExtensionAPI this package uses. Structural and local, so
 // the package loads under jiti without resolving pi's own types.
+export interface PiTui {
+	requestRender(): void;
+}
+
+export interface PiKeybindings {
+	matches(data: string, action: "tui.select.cancel" | "tui.select.up" | "tui.select.down"): boolean;
+}
+
 export interface PiUi {
+	custom<T>(factory: (tui: PiTui, theme: unknown, keybindings: PiKeybindings, done: (result: T) => void) => { render(width: number): string[]; handleInput(data: string): void; invalidate(): void }, options: { overlay: true }): Promise<T>;
 	setStatus(id: string, text: string | undefined): void;
 	/** Persistent panel content; `undefined` clears it. Mirrors `setWidget` in `pi-coding-agent/dist/core/extensions/types.d.ts:112`. */
 	setWidget(key: string, content: string[] | undefined, options?: unknown): void;

@@ -17,6 +17,7 @@ interface FakePi {
 		statuses: Array<{ id: string; text: string | undefined }>;
 		notifications: Array<{ message: string; level: string | undefined }>;
 		widgets: Array<{ id: string; content: string[] | undefined }>;
+		modalLines: string[];
 	};
 	/** Every ui call in the order the extension made it. */
 	calls: string[];
@@ -31,7 +32,22 @@ function fakePi(): FakePi {
 	const notifications: Array<{ message: string; level: string | undefined }> = [];
 	const widgets: Array<{ id: string; content: string[] | undefined }> = [];
 	const calls: string[] = [];
+	const modalLines: string[] = [];
 	const ui = {
+		modalLines,
+		async custom(factory: Function, options: unknown) {
+			assert.deepEqual(options, { overlay: true });
+			const modal = factory({ requestRender() {} }, {}, { matches: (data: string, action: string) => data === action }, () => {});
+			for (let i = 0; i < 100; i++) {
+				for (const line of modal.render(300)) {
+					if (!line.startsWith("│ ")) continue;
+					const content = line.slice(2, -2).trimEnd();
+					if (content === "QwenCloud" || content.startsWith("↑/↓")) continue;
+					if (!modalLines.includes(content)) modalLines.push(content);
+				}
+				modal.handleInput("tui.select.down");
+			}
+		},
 		statuses,
 		notifications,
 		widgets,
@@ -72,7 +88,7 @@ function fakePi(): FakePi {
 	};
 }
 
-test("registers /qwen-quota and renders the exact summary into the persistent widget", async (t) => {
+test("registers /qwen-quota and renders the exact summary in a modal",  async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 	seedKnownAgent(fixture);
@@ -86,12 +102,9 @@ test("registers /qwen-quota and renders the exact summary into the persistent wi
 
 	await command.handler("", fake.ctx);
 
-	// The table goes to the widget: a multi-line toast renders as a flash of text
-	// and was the reason /qwen-quota read as "prints nothing".
-	assert.equal(fake.ui.widgets.length, 1);
-	assert.equal(fake.ui.widgets[0].id, "qwen-quota");
+	assert.deepEqual(fake.ui.widgets, [{ id: "qwen-quota", content: undefined }]);
 	assert.deepEqual(
-		fake.ui.widgets[0].content,
+		fake.ui.modalLines.filter((line) => !line.startsWith("──") && !line.startsWith("↑/↓")),
 		[
 			"QwenCloud Token Plan · local token usage",
 			"window: 2026-11-08 → 2026-11-09 · 2 sessions · 3 assistant turns (all providers)",
@@ -115,14 +128,10 @@ test("registers /qwen-quota and renders the exact summary into the persistent wi
 		],
 	);
 
-	// `notify` stays, but only as a one-line pointer at the widget.
-	assert.equal(fake.ui.notifications.length, 1);
-	assert.equal(fake.ui.notifications[0].level, "info");
-	assert.ok(!fake.ui.notifications[0].message.includes("\n"), "the toast is a single line");
-	assert.ok(fake.ui.notifications[0].message.length <= 80);
+	assert.equal(fake.ui.notifications.length, 0);
 });
 
-test("renders an empty agent dir into a widget instead of only a toast", async (t) => {
+test("renders an empty agent dir in the modal",  async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 
@@ -137,9 +146,8 @@ test("renders an empty agent dir into a widget instead of only a toast", async (
 	assert.ok(command);
 	await command.handler("", fake.ctx);
 
-	const content = fake.ui.widgets[0]?.content ?? [];
-	assert.ok(content.some((line) => /no local session data yet/.test(line)));
-	assert.ok(!/no local session data yet/.test(fake.ui.notifications[0].message));
+	assert.ok(fake.ui.modalLines.some((line) => /no local session data yet/.test(line)));
+	assert.equal(fake.ui.notifications.length, 0);
 });
 
 test("activation emits the usage source without waiting for session_start", async (t) => {
@@ -197,6 +205,7 @@ test("a failing setWidget never rejects the command handler", async (t) => {
 			setWidget() {
 				throw new Error("widget unavailable");
 			},
+			async custom() { throw new Error("modal unavailable"); },
 			notify(message: string) {
 				notifications.push(message);
 			},
@@ -250,9 +259,8 @@ test("degrades silently with no credentials and no session data", async (t) => {
 	const command = fake.commands.get("qwen-quota");
 	assert.ok(command);
 	await command.handler("", fake.ctx);
-	assert.equal(fake.ui.notifications.length, 1);
-	assert.equal(fake.ui.notifications[0].level, "info");
-	assert.ok((fake.ui.widgets[0]?.content ?? []).some((line) => /no local session data yet/.test(line)));
+	assert.equal(fake.ui.notifications.length, 0);
+	assert.ok(fake.ui.modalLines.some((line) => /no local session data yet/.test(line)));
 
 	const onSessionStart = fake.handlers.get("session_start");
 	assert.ok(onSessionStart);
@@ -305,8 +313,7 @@ test("records a provider 429 and surfaces the exhaustion without throwing", asyn
 	const command = fake.commands.get("qwen-quota");
 	assert.ok(command);
 	await command.handler("", fake.ctx);
-	const content = fake.ui.widgets[0]?.content ?? [];
-	assert.ok(content.some((line) => /^exhausted · resets \d{2}:\d{2}$/.test(line)));
+	assert.ok(fake.ui.modalLines.some((line) => /^exhausted · resets \d{2}:\d{2}$/.test(line)));
 
 	// A later healthy response does not clear it or rewrite the status row.
 	await onResponse({ status: 200, headers: {} }, qwenCtx);
