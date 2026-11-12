@@ -7,6 +7,8 @@
 // Every failure (binary missing, not logged in, unknown shape) degrades into a
 // one-line message and never throws into the session.
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import * as nodePath from "node:path";
 
 export const BL_BIN_ENV = "PI_QWENCLOUD_BL_BIN";
 export const BL_REGION_ENV = "PI_QWENCLOUD_BL_REGION";
@@ -49,6 +51,8 @@ export interface BlRunnerResult {
 
 export interface BlDeps {
 	runner?: BlRunner;
+	/** Override the Windows shim->entry lookup; tests pass a stub. */
+	lookup?: (bin: string) => Promise<string | undefined>;
 }
 
 const WINDOW_ORDER: Array<BlWindow["key"]> = ["5-hour", "weekly", "monthly"];
@@ -133,19 +137,67 @@ function unavailable(message: string): BlUsage {
 	return { windows: [], source: "unavailable", message };
 }
 
+function defaultBlLookup(bin: string): Promise<string | undefined> {
+	return new Promise((resolve) => {
+		// `where.exe` finds the npm shim (e.g. ...\npm\bl.cmd); the real entry is
+		// the package's dist script beside its node_modules tree.
+		execFile("where.exe", [bin], (error, stdout) => {
+			if (error || typeof stdout !== "string") return resolve(undefined);
+			const firstLine = stdout.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim();
+			if (!firstLine) return resolve(undefined);
+			const { dirname, join } = nodePath;
+			const entry = join(dirname(firstLine), "node_modules", "bailian-cli", "dist", "bailian.mjs");
+			resolve(existsSync(entry) ? entry : undefined);
+		});
+	});
+}
+
+/**
+ * Resolves the actual (cmd, args) pair to spawn. Windows npm shims are .cmd
+ * files that execFile cannot launch (CreateProcess ignores PATHEXT), so the
+ * underlying bailian.mjs entry is resolved and run under node — no shell, no
+ * injection surface. A caller-pinned .mjs/.js binary runs the same way.
+ */
+export async function resolveBlCommand(
+	bin: string,
+	args: string[],
+	platform: string = process.platform,
+	lookup: (bin: string) => Promise<string | undefined> = defaultBlLookup,
+): Promise<{ cmd: string; args: string[] }> {
+	if (platform !== "win32") return { cmd: bin, args };
+	if (/\.(mjs|cjs|js)$/i.test(bin)) return { cmd: process.execPath, args: [bin, ...args] };
+	const entry = await lookup(bin);
+	if (!entry) return { cmd: bin, args };
+	return { cmd: process.execPath, args: [entry, ...args] };
+}
+
 export async function fetchBlUsage(env: Record<string, string | undefined>, deps: BlDeps = {}): Promise<BlUsage> {
 	const bin = env[BL_BIN_ENV]?.trim() || BL_DEFAULT_BIN;
 	const region = env[BL_REGION_ENV]?.trim() || BL_DEFAULT_REGION;
 	const site = env[BL_SITE_ENV]?.trim() || BL_DEFAULT_SITE;
 	const runner = deps.runner ?? defaultRunner;
-	const sharedArgs = ["--console-region", region, "--console-site", site];
+	const usageCommand = await resolveBlCommand(bin, ["usage", "token-plan", "--output", "json", "--console-region", region, "--console-site", site], process.platform, deps.lookup);
+	const consoleCallCommand = await resolveBlCommand(bin, [
+		"console",
+		"call",
+		"--api",
+		USAGE_API,
+		"--data",
+		"{}",
+		"--output",
+		"json",
+		"--console-region",
+		region,
+		"--console-site",
+		site,
+	], process.platform, deps.lookup);
 	// The bare login goes to the China console; an international user following
 	// that hint would land on a site that cannot even see their plan.
 	const loginHint = `bl auth login --console --console-site ${site} --console-region ${region}`;
 
 	let first: BlRunnerResult;
 	try {
-		first = await runner(bin, ["usage", "token-plan", "--output", "json", ...sharedArgs]);
+		first = await runner(usageCommand.cmd, usageCommand.args);
 	} catch {
 		// Runner internals (timeout detail, spawn crash) never reach the message.
 		return unavailable("bl: query failed (the CLI did not answer)");
@@ -165,17 +217,7 @@ export async function fetchBlUsage(env: Record<string, string | undefined>, deps
 	// the console gateway for the raw personal usage payload.
 	let fallback: BlRunnerResult;
 	try {
-		fallback = await runner(bin, [
-			"console",
-			"call",
-			"--api",
-			USAGE_API,
-			"--data",
-			"{}",
-			"--output",
-			"json",
-			...sharedArgs,
-		]);
+		fallback = await runner(consoleCallCommand.cmd, consoleCallCommand.args);
 	} catch {
 		return unavailable("bl: query failed (the CLI did not answer)");
 	}

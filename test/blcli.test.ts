@@ -74,7 +74,7 @@ test("runs the usage command first with fixed argv, region and site from env", a
 	const { calls, runner } = scriptedRunner([OK(LIVE_JSON)]);
 	await fetchBlUsage(
 		{ [BL_REGION_ENV]: "ap-southeast-1", [BL_SITE_ENV]: "international", [BL_BIN_ENV]: "C:/tools/bl.exe" },
-		{ runner },
+		{ runner, lookup: async () => undefined },
 	);
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0].cmd, "C:/tools/bl.exe");
@@ -95,7 +95,7 @@ test("an empty usage JSON (monthly-only account, issue #231) falls back to the c
 		OK("{}"),
 		OK(JSON.stringify({ data: { per1MonthPercentage: 0.028, per1MonthResetTime: 1790000000000 } })),
 	]);
-	const usage = await fetchBlUsage(ENV, { runner });
+	const usage = await fetchBlUsage(ENV, { runner, lookup: async () => undefined });
 	assert.equal(calls.length, 2);
 	assert.deepEqual(calls[1].args, [
 		"console",
@@ -219,4 +219,30 @@ test("the not-logged-in hint names the international site and region when applic
 
 	const domestic = await fetchBlUsage({ [BL_SITE_ENV]: "domestic" }, { runner: scriptedRunner([AUTH_FAIL, AUTH_FAIL]).runner });
 	assert.match(domestic.message, /bl auth login --console --console-site domestic --console-region ap-southeast-1/);
+});
+
+// Windows: npm installs `bl` as a .cmd shim that execFile cannot spawn
+// (CreateProcess does not resolve PATHEXT). The command must resolve to the
+// underlying bailian.mjs entry and run under node — never via a shell.
+test("resolveBlCommand passes through on non-Windows and for .mjs pins", async () => {
+	const { resolveBlCommand } = await import("../src/blcli.ts");
+	const plain = await resolveBlCommand("bl", ["usage", "token-plan"], "linux");
+	assert.deepEqual(plain, { cmd: "bl", args: ["usage", "token-plan"] });
+
+	const pinned = await resolveBlCommand("C:/tools/bailian.mjs", ["usage"], "win32");
+	assert.equal(pinned.cmd, process.execPath);
+	assert.deepEqual(pinned.args, ["C:/tools/bailian.mjs", "usage"]);
+});
+
+test("resolveBlCommand resolves the npm shim to the package entry on Windows", async () => {
+	const { resolveBlCommand } = await import("../src/blcli.ts");
+	const resolved = await resolveBlCommand("bl", ["usage", "token-plan"], "win32", async () => "C:/npm/node_modules/bailian-cli/dist/bailian.mjs");
+	assert.equal(resolved.cmd, process.execPath);
+	assert.deepEqual(resolved.args, ["C:/npm/node_modules/bailian-cli/dist/bailian.mjs", "usage", "token-plan"]);
+});
+
+test("resolveBlCommand falls back to the raw bin when no entry is found (surface the original failure)", async () => {
+	const { resolveBlCommand } = await import("../src/blcli.ts");
+	const fallback = await resolveBlCommand("bl", ["usage"], "win32", async () => undefined);
+	assert.deepEqual(fallback, { cmd: "bl", args: ["usage"] });
 });
