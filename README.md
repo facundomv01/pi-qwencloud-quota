@@ -46,24 +46,30 @@ Además:
 
 ## Instalación
 
-### Opción 1: desde este repositorio (recomendada hoy)
+### Opción 1: desde npm (recomendada)
+
+```bash
+pi install npm:pi-qwencloud-quota
+```
+
+### Opción 2: desde este repositorio
 
 ```bash
 git clone https://github.com/facundomv01/pi-qwencloud-quota.git
 pi install ./pi-qwencloud-quota
 ```
 
-### Opción 2: probarla sin cambiar tu configuración
+### Opción 3: probarla sin cambiar tu configuración
 
 ```bash
 pi -e ./pi-qwencloud-quota
 ```
 
-### Opción 3: agregarla a tu `settings.json`
+### Opción 4: agregarla a tu `settings.json`
 
 ```json
 {
-  "packages": ["github:facundomv01/pi-qwencloud-quota"]
+  "packages": ["npm:pi-qwencloud-quota"]
 }
 ```
 
