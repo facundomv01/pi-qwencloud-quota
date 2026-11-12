@@ -139,6 +139,9 @@ export async function fetchBlUsage(env: Record<string, string | undefined>, deps
 	const site = env[BL_SITE_ENV]?.trim() || BL_DEFAULT_SITE;
 	const runner = deps.runner ?? defaultRunner;
 	const sharedArgs = ["--console-region", region, "--console-site", site];
+	// The bare login goes to the China console; an international user following
+	// that hint would land on a site that cannot even see their plan.
+	const loginHint = `bl auth login --console --console-site ${site} --console-region ${region}`;
 
 	let first: BlRunnerResult;
 	try {
@@ -182,5 +185,5 @@ export async function fetchBlUsage(env: Record<string, string | undefined>, deps
 			return { windows, source: "console-call", message: "bl: Individual plan windows (console gateway)" };
 		}
 	}
-	return unavailable("bl: no quota windows reported (is the CLI logged in? run \"bl auth login --console\")");
+	return unavailable(`bl: no quota windows reported (is the CLI logged in? run "${loginHint}")`);
 }

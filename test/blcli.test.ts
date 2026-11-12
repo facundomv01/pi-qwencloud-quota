@@ -209,3 +209,14 @@ test("renderSummary shows the bl setup hint when the CLI is unavailable", async 
 
 	assert.match(text, /^bl CLI not found · install bailian-cli/m);
 });
+
+// The bare login defaults to the China console; an international user (like
+// this package's Singapore default) must be told the site-aware command.
+test("the not-logged-in hint names the international site and region when applicable", async () => {
+	const { runner } = scriptedRunner([AUTH_FAIL, AUTH_FAIL]);
+	const usage = await fetchBlUsage(ENV, { runner });
+	assert.match(usage.message, /bl auth login --console --console-site international --console-region ap-southeast-1/);
+
+	const domestic = await fetchBlUsage({ [BL_SITE_ENV]: "domestic" }, { runner: scriptedRunner([AUTH_FAIL, AUTH_FAIL]).runner });
+	assert.match(domestic.message, /bl auth login --console --console-site domestic --console-region ap-southeast-1/);
+});
