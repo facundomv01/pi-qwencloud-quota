@@ -2,7 +2,9 @@
 
 # pi-qwencloud-quota
 
-<a href="https://github.com/Gentleman-Programming/gentle-shell"><img src="https://img.shields.io/badge/Desarrollado_con-gentle--shell-F095C8?style=for-the-badge&labelColor=1A1218" alt="Desarrollado con gentle-shell"></a>
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+</a>
 
 **Extensión de [Pi](https://github.com/earendil-works/pi) que muestra el consumo de tu Token Plan de QwenCloud/Alibaba Cloud.**
 
@@ -12,13 +14,19 @@
 
 ## Capturas
 
-| Cargando | Overview |
-|---|---|
-| ![cargando](docs/img/loading.svg) | ![overview](docs/img/overview.svg) |
+El modal abre al instante, muestra un indicador de carga temático mientras consulta tus sesiones y la quota del plan, y después renderiza dos pestañas con los colores del tema de tu shell.
 
-| Breakdown |
-|---|
-| ![breakdown](docs/img/breakdown.svg) |
+**Cargando** — lo que ves en los primeros instantes:
+
+![cargando](docs/img/loading.svg)
+
+**Overview** — la quota real del plan arriba y destacada, después el uso local con etiquetas honestas:
+
+![overview](docs/img/overview.svg)
+
+**Breakdown** — las tablas completas por proveedor, modelo, día y proyecto, sin scroll:
+
+![breakdown](docs/img/breakdown.svg)
 
 ## Qué hace
 
