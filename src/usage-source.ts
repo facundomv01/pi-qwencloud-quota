@@ -1,6 +1,8 @@
 import { formatShare, formatTokens } from "./format.ts";
 import { fetchCredits } from "./credits.ts";
 import type { CreditsSnapshot } from "./credits.ts";
+import { fetchBlUsage } from "./blcli.ts";
+import type { BlRunner, BlUsage, BlWindow } from "./blcli.ts";
 import { aggregateSessions, providerBucket, resolveDays } from "./sessions.ts";
 import type { ProviderUsage, UsageSourcePayload, UsageWindow } from "./types.ts";
 
@@ -18,6 +20,8 @@ export interface UsageSourceOptions {
 	days?: number;
 	env?: Record<string, string | undefined>;
 	now?: () => number;
+	/** Injectable transport for the bl CLI (route B2); no spawn when omitted. */
+	blRunner?: BlRunner;
 }
 
 // The provider row shows only its own local traffic, never a quota gauge.
@@ -47,6 +51,24 @@ export function creditsWindow(snapshot: CreditsSnapshot): UsageWindow | undefine
 	};
 }
 
+// Route B2's windows are the real gauge for an Individual plan: the CLI
+// reports used ratios and resets per window, and each window's length is the
+// documented period its name stands for.
+const BL_WINDOW_SECONDS: Record<BlWindow["key"], number> = {
+	"5-hour": 5 * 3600,
+	weekly: 7 * 24 * 3600,
+	monthly: 30 * 24 * 3600,
+};
+
+export function blWindows(bl: BlUsage): UsageWindow[] {
+	return bl.windows.map((window) => ({
+		label: window.key,
+		usedPercent: window.usedPercent,
+		windowSeconds: BL_WINDOW_SECONDS[window.key],
+		resetAt: window.resetAt,
+	}));
+}
+
 // Route D mapped onto the usage-source contract. There is no server-side quota
 // for a token plan, so the payload claims no allowance: `limits` carries one
 // window-less entry with `limitReached: false`, and the measured counts ride in
@@ -72,16 +94,28 @@ export function buildUsageSource(options: UsageSourceOptions = {}): UsageSourceP
 				// every provider on disk; only the subset whose own `provider` field is
 				// this one belongs in the plan figure.
 				const qwen = providerBucket(aggregate, USAGE_PROVIDER);
-				const snapshot = await fetchCredits(options.env ?? {}, { fetchFn, now: () => now });
-				const window = creditsWindow(snapshot);
+				// Route B2 first: an Individual plan's real windows. Only when the CLI
+				// reports nothing does the seat-based credits route (B) get asked —
+				// and with no credentials configured that call stays local.
+				let limits: ProviderUsage["limits"] = [{ name: "local", windows: [], limitReached: false }];
+				if (options.blRunner) {
+					const bl = await fetchBlUsage(options.env ?? {}, { runner: options.blRunner });
+					const windows = blWindows(bl);
+					if (windows.length > 0) {
+						limits = [{ name: "token plan", windows, limitReached: windows.some((w) => w.usedPercent >= 100), scope: "provider" }];
+					}
+				}
+				if (limits[0].windows.length === 0) {
+					const snapshot = await fetchCredits(options.env ?? {}, { fetchFn, now: () => now });
+					const window = creditsWindow(snapshot);
+					if (window) {
+						limits = [{ name: "credits", windows: [window], limitReached: (snapshot.remaining ?? 1) <= 0, scope: "provider" }];
+					}
+				}
 				return {
 					provider: USAGE_PROVIDER,
 					plan: planLine(qwen?.totals.totalTokens ?? 0, qwen?.cacheReadShare ?? 0, days),
-					limits: [
-						window
-							? { name: "credits", windows: [window], limitReached: (snapshot.remaining ?? 1) <= 0, scope: "provider" as const }
-							: { name: "local", windows: [], limitReached: false },
-					],
+					limits,
 					fetchedAt: now,
 				};
 			} catch {

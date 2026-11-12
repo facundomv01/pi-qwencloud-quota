@@ -2,6 +2,7 @@ import { readCredits } from "./credits.ts";
 import type { CreditsStatus } from "./credits.ts";
 import type { ExhaustionRecord } from "./exhaustion.ts";
 import { formatClock, formatShare, formatTokens, plural } from "./format.ts";
+import type { BlUsage } from "./blcli.ts";
 import { providerBucket } from "./sessions.ts";
 import type { Aggregate, Bucket } from "./sessions.ts";
 import { USAGE_PROVIDER } from "./usage-source.ts";
@@ -17,11 +18,29 @@ export interface SummaryOptions {
 	exhaustion?: ExhaustionRecord;
 	/** A pre-fetched route B snapshot; when absent, the sync not-configured/pending line is used. */
 	credits?: CreditsStatus;
+	/** A pre-fetched route B2 (bl CLI) snapshot for Individual plans. */
+	bl?: BlUsage;
+	/** Clock for rendering bl reset times; defaults to the real one. */
+	now?: () => number;
 }
 
 /** `exhausted · resets HH:MM`, or an explicit unknown when Retry-After gave nothing usable. */
 export function renderExhaustion(record: ExhaustionRecord): string {
 	return record.resetAt === null ? "exhausted · resets unknown" : `exhausted · resets ${formatClock(record.resetAt)}`;
+}
+
+/**
+ * One line for the Individual-plan windows the bl CLI reported. A reset within
+ * 24h renders as a local clock time, further out as a date.
+ */
+export function renderBlLine(bl: BlUsage, now: number): string | undefined {
+	if (bl.windows.length === 0) return undefined;
+	const parts = bl.windows.map((window) => {
+		if (window.resetAt === null) return `${window.key} ${window.usedPercent.toFixed(1)}%`;
+		const reset = window.resetAt - now <= 86_400_000 ? `resets ${formatClock(window.resetAt)}` : `resets ${new Date(window.resetAt).toISOString().slice(0, 10)}`;
+		return `${window.key} ${window.usedPercent.toFixed(1)}% · ${reset}`;
+	});
+	return `Individual plan (bl CLI): ${parts.join(" · ")}`;
 }
 
 // Compact, human-readable and honest: token counts, the cacheRead ratio, and
@@ -30,10 +49,12 @@ export function renderExhaustion(record: ExhaustionRecord): string {
 export function renderSummary(aggregate: Aggregate, options: SummaryOptions): string {
 	const lines = [SUMMARY_HEADER];
 	const credits = (options.credits ?? readCredits(options.env)).message;
+	const blLine = options.bl ? renderBlLine(options.bl, (options.now ?? Date.now)()) : undefined;
 
 	if (aggregate.turns === 0) {
 		const root = options.agentDir.replace(/[\\/]+$/, "");
 		lines.push(`no local session data yet · looked in ${root}/sessions and ${root}/gentle-agents/sessions`);
+		if (blLine) lines.push(blLine);
 		lines.push(credits);
 		return lines.join("\n");
 	}
@@ -65,6 +86,7 @@ export function renderSummary(aggregate: Aggregate, options: SummaryOptions): st
 		...renderBuckets("by day", aggregate.byDay),
 		...renderBuckets("by project", aggregate.byProject),
 	);
+	if (blLine) lines.push(blLine);
 	lines.push(credits);
 	return lines.join("\n");
 }

@@ -222,3 +222,28 @@ test("fetch resolves undefined when there is no local session data", async () =>
 		fixture.cleanup();
 	}
 });
+
+// Route B2: when the bl CLI reports Individual-plan windows, they are the real
+// gauge and take precedence over the seat-based credits route.
+test("emits bl windows as the usage limits when the CLI reports them", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const payload = buildUsageSource({
+		agentDir: fixture.dir,
+		days: 7,
+		now: () => KNOWN_NOW,
+		blRunner: async () => ({ ok: true, code: 0, stdout: JSON.stringify({ per1WeekPercentage: 0.7, per1WeekResetTime: 1787001180000 }), stderr: "" }),
+	});
+	const usage = await payload.fetch(undefined, (async () => {
+		throw new Error("route B must not be called when bl reports windows");
+	}) as unknown as typeof fetch, KNOWN_NOW);
+
+	assert.ok(usage);
+	assert.equal(usage.limits.length, 1);
+	assert.equal(usage.limits[0].name, "token plan");
+	assert.deepEqual(usage.limits[0].windows, [
+		{ label: "weekly", usedPercent: 70, windowSeconds: 604800, resetAt: 1787001180000 },
+	]);
+});

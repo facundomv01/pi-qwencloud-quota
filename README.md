@@ -7,7 +7,8 @@ It has two routes. Only the first one ships today:
 | Route | Source | Status |
 |---|---|---|
 | **D — local token usage** | Pi's own session JSONL under `~/.gentle-shell/agent/` | **implemented** |
-| **B — remaining Credits** | Alibaba Cloud Model Studio OpenAPI `GetSubscriptionStats` (RAM AccessKey, signed `ACS3-HMAC-SHA256`) | **implemented** |
+| **B — remaining Credits** | Alibaba Cloud Model Studio OpenAPI `GetSubscriptionStats` (RAM AccessKey, signed `ACS3-HMAC-SHA256`) | **implemented** — seat-shaped; an Individual plan reports no data |
+| **B2 — Individual-plan windows** | Alibaba's own Bailian CLI (`bailian-cli` / `bl`), console-login gated | **implemented** — the route Individual plans actually report through |
 
 ## What it does
 
@@ -87,6 +88,9 @@ All configuration is environment-only. Nothing is read from disk except the sess
 | `ALIBABA_CLOUD_ACCESS_KEY_ID` | B | — | RAM AccessKey ID. Needs the read-only Token Plan permission (see below). |
 | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | B | — | Matching RAM AccessKey secret. |
 | `ALIBABA_CLOUD_REGION_ID` | B | `ap-southeast-1` | Model Studio region for the endpoint host. Token Plan is Singapore-only, so keep the default unless Alibaba tells you otherwise. |
+| `PI_QWENCLOUD_BL_BIN` | B2 | `bl` | Path to the Bailian CLI binary. Set it to pin an exact binary instead of trusting `PATH`. |
+| `PI_QWENCLOUD_BL_REGION` | B2 | `ap-southeast-1` | Console gateway region passed to `bl` (`--console-region`). |
+| `PI_QWENCLOUD_BL_SITE` | B2 | `international` | Console site passed to `bl` (`--console-site`): `international` or `domestic`. |
 
 ### Route B: what it calls, and what it needs
 
@@ -118,6 +122,24 @@ The reset date only appears when every seat group's cycle end agrees; otherwise 
 - `Credits: query failed (HTTP …)` — network, signature or permission problems degrade into one line and never include the credential or the request material.
 
 When the API reports both the credits and the subscription period, the gentle-shell usage panel also gets a real `credits` usage window (a genuine gauge with `used`/`budget`), not the windowless local-only entry.
+
+### Route B2: Individual plans through the official Bailian CLI
+
+`GetSubscriptionStats` is seat-shaped: an **Individual** (personal) plan reports no seats, and no key-based endpoint exists for it — the plan's own `sk-sp-` key is never accepted by quota endpoints. The sanctioned way to read an Individual plan's quota is Alibaba's own open-source CLI:
+
+```bash
+npm install -g bailian-cli   # requires Node >= 22.12
+bl auth login --console      # one-time browser OAuth login
+bl usage token-plan --output json   # verify it reports your windows
+```
+
+The extension then spawns `bl usage token-plan --output json` with fixed arguments (never a shell, 15 s timeout) and — when the command answers empty, which happens on monthly-only accounts — falls back to `bl console call` against the raw personal-usage API. It parses only the documented `per5Hour*`/`per1Week*`/`per1Month*` percentage and reset fields, renders them as `5-hour` / `weekly` / `monthly` windows in the usage panel, and prints one line in `/qwen-quota`:
+
+```
+Individual plan (bl CLI): 5-hour 12.0% · resets 14:30 · monthly 2.8% · resets 2026-12-12
+```
+
+Everything fails soft: no CLI, no login, or an unknown shape degrades into a one-line message and the panel keeps the seat-based/local payloads. The CLI's own auth state on disk is never read, copied, or exposed by this package; when both B and B2 report data, B2's windows (the Individual plan's real gauge) take precedence.
 
 Scraping the QwenCloud console with browser cookies is deliberately **not** implemented — a hard constraint of the spec, not an oversight.
 

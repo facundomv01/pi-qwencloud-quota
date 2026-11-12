@@ -2,6 +2,8 @@ import { aggregateSessions, resolveAgentDir, resolveDays } from "./sessions.ts";
 import type { Aggregate } from "./sessions.ts";
 import { createExhaustionTracker } from "./exhaustion.ts";
 import { fetchCredits } from "./credits.ts";
+import { fetchBlUsage } from "./blcli.ts";
+import type { BlRunner } from "./blcli.ts";
 import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
 import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
 import { USAGE_SOURCE_EVENT, buildUsageSource } from "./usage-source.ts";
@@ -30,6 +32,8 @@ export interface QuotaOptions {
 	now?: () => number;
 	/** Injectable transport for route B, so tests never touch the network. */
 	fetchFn?: typeof fetch;
+	/** Injectable transport for route B2 (bl CLI), so tests never spawn a process. */
+	blRunner?: BlRunner;
 }
 
 // Wires the three surfaces this package owns: the usage-source event gentle-shell
@@ -59,7 +63,7 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 		try {
 			// Re-registering is a no-op in effect: gentle-shell replaces the source
 			// for the same provider, so emitting more than once is safe.
-			pi.events?.emit(USAGE_SOURCE_EVENT, buildUsageSource({ agentDir, days, env }));
+			pi.events?.emit(USAGE_SOURCE_EVENT, buildUsageSource({ agentDir, days, env, blRunner: options.blRunner }));
 		} catch {
 			// The command below still works without the hook.
 		}
@@ -101,15 +105,21 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 		handler: async (_args: string, ctx: PiActionContext) => {
 			let message: string;
 			try {
-				// Route B runs here, where an await is allowed: fetchCredits never
-				// throws, and the `.catch` keeps that guarantee explicit.
-				const credits = await fetchCredits(env, { fetchFn: options.fetchFn }).catch(() => undefined);
+				// Route B (AccessKey) and B2 (bl CLI) run here, where an await is
+				// allowed. Neither ever throws; the `.catch`es keep that explicit.
+				const [credits, bl] = await Promise.all([
+					fetchCredits(env, { fetchFn: options.fetchFn }).catch(() => undefined),
+					options.blRunner
+						? fetchBlUsage(env, { runner: options.blRunner }).catch(() => undefined)
+						: Promise.resolve(undefined),
+				]);
 				message = renderSummary(aggregate(), {
 					agentDir,
 					days,
 					env,
 					exhaustion: exhaustion.current(),
 					credits,
+					bl,
 				});
 			} catch (error) {
 				message = `qwen-quota: could not read local sessions (${error instanceof Error ? error.message : "unknown error"})`;
