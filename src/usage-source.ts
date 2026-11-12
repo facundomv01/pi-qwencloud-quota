@@ -2,7 +2,7 @@ import { formatShare, formatTokens } from "./format.ts";
 import { fetchCredits } from "./credits.ts";
 import type { CreditsSnapshot } from "./credits.ts";
 import { fetchBlUsage } from "./blcli.ts";
-import type { BlRunner, BlUsage, BlWindow } from "./blcli.ts";
+import type { BlCache, BlRunner, BlUsage, BlWindow } from "./blcli.ts";
 import { aggregateSessions, providerBucket, resolveDays } from "./sessions.ts";
 import type { ProviderUsage, UsageSourcePayload, UsageWindow } from "./types.ts";
 
@@ -22,6 +22,8 @@ export interface UsageSourceOptions {
 	now?: () => number;
 	/** Injectable transport for the bl CLI (route B2); no spawn when omitted. */
 	blRunner?: BlRunner;
+	/** Shared TTL cache so panel refreshes do not respawn the CLI. */
+	blCache?: BlCache;
 }
 
 // The provider row shows only its own local traffic, never a quota gauge.
@@ -100,7 +102,7 @@ export function buildUsageSource(options: UsageSourceOptions = {}): UsageSourceP
 				let limits: ProviderUsage["limits"] = [{ name: "local", windows: [], limitReached: false }];
 				// Route B2 always runs: the default transport is the real bl binary;
 				// options.blRunner only overrides it for tests.
-				const bl = await fetchBlUsage(options.env ?? {}, { runner: options.blRunner });
+				const bl = await fetchBlUsage(options.env ?? {}, { runner: options.blRunner, cache: options.blCache, now: options.now });
 				const windows = blWindows(bl);
 				if (windows.length > 0) {
 					limits = [{ name: "token plan", windows, limitReached: windows.some((w) => w.usedPercent >= 100), scope: "provider" }];

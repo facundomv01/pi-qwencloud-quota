@@ -34,3 +34,20 @@ test("modal displays local summary, scrolls and closes with cancel", () => {
 	modal.handleInput("tui.select.cancel");
 	assert.equal(closed, 1);
 });
+
+// A wrapped table row must keep its shape: continuation lines carry a hanging
+// indent instead of starting flush-left and breaking the column rhythm.
+test("wrapped rows keep a hanging indent", () => {
+	const modal = createQuotaModal(
+		{ requestRender() {} },
+		{ matches: () => false },
+		() => {},
+		"  binance-trader-copilot 111 turns · 7.9M tok · cacheRead 98.0%",
+	);
+	const rendered = modal.render(30);
+	const continuation = rendered.filter((line) => /^│ {5}[^ ]/u.test(line) && line.includes("cacheRead"));
+	assert.ok(continuation.length > 0, `expected a wrapped continuation in ${JSON.stringify(rendered)}`);
+	for (const line of continuation) {
+		assert.match(line, /^│ {5}[^ ]/, `continuation must be indented: ${JSON.stringify(line)}`);
+	}
+});

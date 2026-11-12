@@ -49,10 +49,42 @@ export interface BlRunnerResult {
 	stderr: string;
 }
 
+/** Shared TTL cache so panel refreshes and /qwen-quota collapse into one spawn. */
+export interface BlCache {
+	get(key: string, now: number): BlUsage | undefined;
+	set(key: string, usage: BlUsage, now: number): void;
+}
+
+export const BL_CACHE_TTL_MS = 60_000;
+export const BL_CACHE_UNAVAILABLE_TTL_MS = 15_000;
+
+export function createBlCache(
+	options: { ttlMs?: number; unavailableTtlMs?: number; now?: () => number } = {},
+): BlCache {
+	const ttl = options.ttlMs ?? BL_CACHE_TTL_MS;
+	const unavailableTtl = options.unavailableTtlMs ?? BL_CACHE_UNAVAILABLE_TTL_MS;
+	const now = options.now ?? Date.now;
+	let entry: { key: string; at: number; usage: BlUsage } | undefined;
+	return {
+		get(key, at) {
+			if (!entry || entry.key !== key) return undefined;
+			const age = at - entry.at;
+			const limit = entry.usage.source === "unavailable" ? unavailableTtl : ttl;
+			return age >= 0 && age < limit ? entry.usage : undefined;
+		},
+		set(key, usage, at) {
+			entry = { key, at, usage };
+		},
+	};
+}
+
 export interface BlDeps {
 	runner?: BlRunner;
 	/** Override the Windows shim->entry lookup; tests pass a stub. */
 	lookup?: (bin: string) => Promise<string | undefined>;
+	/** Shared TTL cache; absent in most tests, wired by the extension. */
+	cache?: BlCache;
+	now?: () => number;
 }
 
 const WINDOW_ORDER: Array<BlWindow["key"]> = ["5-hour", "weekly", "monthly"];
@@ -138,19 +170,26 @@ function unavailable(message: string): BlUsage {
 }
 
 function defaultBlLookup(bin: string): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		// `where.exe` finds the npm shim (e.g. ...\npm\bl.cmd); the real entry is
-		// the package's dist script beside its node_modules tree.
-		execFile("where.exe", [bin], (error, stdout) => {
-			if (error || typeof stdout !== "string") return resolve(undefined);
-			const firstLine = stdout.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim();
-			if (!firstLine) return resolve(undefined);
-			const { dirname, join } = nodePath;
-			const entry = join(dirname(firstLine), "node_modules", "bailian-cli", "dist", "bailian.mjs");
-			resolve(existsSync(entry) ? entry : undefined);
-		});
-	});
+	// One where.exe per bin per process: the npm prefix does not move mid-session.
+	const memo = defaultBlLookup.memo as Map<string, Promise<string | undefined>>;
+	if (!memo.has(bin)) {
+		memo.set(
+			bin,
+			new Promise<string | undefined>((resolve) => {
+				execFile("where.exe", [bin], (error, stdout) => {
+					if (error || typeof stdout !== "string") return resolve(undefined);
+					const firstLine = stdout.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim();
+					if (!firstLine) return resolve(undefined);
+					const { dirname, join } = nodePath;
+					const entry = join(dirname(firstLine), "node_modules", "bailian-cli", "dist", "bailian.mjs");
+					resolve(existsSync(entry) ? entry : undefined);
+				});
+			}),
+		);
+	}
+	return memo.get(bin)!;
 }
+defaultBlLookup.memo = new Map<string, Promise<string | undefined>>();
 
 /**
  * Resolves the actual (cmd, args) pair to spawn. Windows npm shims are .cmd
@@ -176,7 +215,44 @@ export async function fetchBlUsage(env: Record<string, string | undefined>, deps
 	const region = env[BL_REGION_ENV]?.trim() || BL_DEFAULT_REGION;
 	const site = env[BL_SITE_ENV]?.trim() || BL_DEFAULT_SITE;
 	const runner = deps.runner ?? defaultRunner;
+	const now = deps.now ?? Date.now;
+	const cacheKey = `${bin}|${region}|${site}`;
+	if (deps.cache) {
+		const cached = deps.cache.get(cacheKey, now());
+		if (cached) return cached;
+	}
 	const usageCommand = await resolveBlCommand(bin, ["usage", "token-plan", "--output", "json", "--console-region", region, "--console-site", site], process.platform, deps.lookup);
+	// The bare login goes to the China console; an international user following
+	// that hint would land on a site that cannot even see their plan.
+	const loginHint = `bl auth login --console --console-site ${site} --console-region ${region}`;
+
+	let first: BlRunnerResult;
+	try {
+		first = await runner(usageCommand.cmd, usageCommand.args);
+	} catch {
+		// Runner internals (timeout detail, spawn crash) never reach the message.
+		const failed = unavailable("bl: query failed (the CLI did not answer)");
+		deps.cache?.set(cacheKey, failed, now());
+		return failed;
+	}
+	if (first.code === "ENOENT") {
+		const none = unavailable(`bl CLI not found · install bailian-cli and run "bl auth login --console" once`);
+		deps.cache?.set(cacheKey, none, now());
+		return none;
+	}
+	if (first.ok) {
+		const { windows } = parseBlPayload(first.stdout);
+		if (windows.length > 0) {
+			const usage: BlUsage = { windows, source: "usage", message: "bl: Individual plan windows (console login)" };
+			deps.cache?.set(cacheKey, usage, now());
+			return usage;
+		}
+	}
+
+	// Issue #231: monthly-only accounts get an empty usage JSON because the CLI
+	// table reads only the 5-hour/weekly fields. The documented fallback asks
+	// the console gateway for the raw personal usage payload — resolved lazily,
+	// so a successful first command never pays for a second lookup.
 	const consoleCallCommand = await resolveBlCommand(bin, [
 		"console",
 		"call",
@@ -191,41 +267,23 @@ export async function fetchBlUsage(env: Record<string, string | undefined>, deps
 		"--console-site",
 		site,
 	], process.platform, deps.lookup);
-	// The bare login goes to the China console; an international user following
-	// that hint would land on a site that cannot even see their plan.
-	const loginHint = `bl auth login --console --console-site ${site} --console-region ${region}`;
-
-	let first: BlRunnerResult;
-	try {
-		first = await runner(usageCommand.cmd, usageCommand.args);
-	} catch {
-		// Runner internals (timeout detail, spawn crash) never reach the message.
-		return unavailable("bl: query failed (the CLI did not answer)");
-	}
-	if (first.code === "ENOENT") {
-		return unavailable(`bl CLI not found · install bailian-cli and run "bl auth login --console" once`);
-	}
-	if (first.ok) {
-		const { windows } = parseBlPayload(first.stdout);
-		if (windows.length > 0) {
-			return { windows, source: "usage", message: "bl: Individual plan windows (console login)" };
-		}
-	}
-
-	// Issue #231: monthly-only accounts get an empty usage JSON because the CLI
-	// table reads only the 5-hour/weekly fields. The documented fallback asks
-	// the console gateway for the raw personal usage payload.
 	let fallback: BlRunnerResult;
 	try {
 		fallback = await runner(consoleCallCommand.cmd, consoleCallCommand.args);
 	} catch {
-		return unavailable("bl: query failed (the CLI did not answer)");
+		const failed = unavailable("bl: query failed (the CLI did not answer)");
+		deps.cache?.set(cacheKey, failed, now());
+		return failed;
 	}
 	if (fallback.ok) {
 		const { windows } = parseBlPayload(fallback.stdout);
 		if (windows.length > 0) {
-			return { windows, source: "console-call", message: "bl: Individual plan windows (console gateway)" };
+			const usage: BlUsage = { windows, source: "console-call", message: "bl: Individual plan windows (console gateway)" };
+			deps.cache?.set(cacheKey, usage, now());
+			return usage;
 		}
 	}
-	return unavailable(`bl: no quota windows reported (is the CLI logged in? run "${loginHint}")`);
+	const none = unavailable(`bl: no quota windows reported (is the CLI logged in? run "${loginHint}")`);
+	deps.cache?.set(cacheKey, none, now());
+	return none;
 }

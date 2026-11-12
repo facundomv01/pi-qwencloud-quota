@@ -272,3 +272,46 @@ test("the bl line renders near the top of the summary, after the plan totals", a
 	assert.equal(blIndex, planIndex + 1);
 	assert.ok(blIndex < allIndex);
 });
+
+// Performance: the panel refreshes often and /qwen-quota runs the same query.
+// A shared TTL cache (success + unavailable) must collapse those into one spawn.
+test("repeated fetches within the TTL reuse the cached snapshot", async () => {
+	const { createBlCache } = await import("../src/blcli.ts");
+	let clock = 1000;
+	const { calls, runner } = scriptedRunner([OK(LIVE_JSON)]);
+	const cache = createBlCache({ now: () => clock });
+	const first = await fetchBlUsage(ENV, { runner, cache, now: () => clock });
+	const second = await fetchBlUsage(ENV, { runner, cache, now: () => clock });
+	assert.equal(calls.length, 1, "the second fetch must not spawn");
+	assert.deepEqual(second.windows, first.windows);
+	clock += 60_001;
+	const third = await fetchBlUsage(ENV, { runner, cache, now: () => clock });
+	assert.equal(calls.length, 2, "after the TTL the fetch must spawn again");
+});
+
+test("unavailable results cache with a shorter TTL", async () => {
+	const { createBlCache } = await import("../src/blcli.ts");
+	let clock = 1000;
+	const { calls, runner } = scriptedRunner([ENOENT]);
+	const cache = createBlCache({ now: () => clock });
+	await fetchBlUsage(ENV, { runner, cache, now: () => clock });
+	await fetchBlUsage(ENV, { runner, cache, now: () => clock });
+	assert.equal(calls.length, 1);
+	clock += 16_000;
+	await fetchBlUsage(ENV, { runner, cache, now: () => clock });
+	assert.equal(calls.length, 2);
+});
+
+test("the console-call command resolves lazily: one lookup when the first command answers", async () => {
+	let lookups = 0;
+	const { calls, runner } = scriptedRunner([OK(LIVE_JSON)]);
+	await fetchBlUsage(ENV, {
+		runner,
+		lookup: async (bin) => {
+			lookups++;
+			return undefined;
+		},
+	});
+	assert.equal(calls.length, 1);
+	assert.equal(lookups, 1, "only the usage command is resolved up front");
+});

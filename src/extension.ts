@@ -3,6 +3,7 @@ import type { Aggregate } from "./sessions.ts";
 import { createExhaustionTracker } from "./exhaustion.ts";
 import { fetchCredits } from "./credits.ts";
 import { fetchBlUsage } from "./blcli.ts";
+import { createBlCache } from "./blcli.ts";
 import type { BlRunner } from "./blcli.ts";
 import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
 import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
@@ -46,6 +47,9 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 	const days = resolveDays({ days: options.days, env });
 	const clock = options.now ?? (() => Date.now());
 	const exhaustion = createExhaustionTracker(clock);
+	// One shared TTL cache for both surfaces: panel refreshes and /qwen-quota
+	// collapse into a single bl spawn per minute instead of one per render.
+	const blCache = createBlCache({ now: clock });
 
 	const aggregate = (): Aggregate => aggregateSessions({ agentDir, days, now: clock() });
 
@@ -63,7 +67,7 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 		try {
 			// Re-registering is a no-op in effect: gentle-shell replaces the source
 			// for the same provider, so emitting more than once is safe.
-			pi.events?.emit(USAGE_SOURCE_EVENT, buildUsageSource({ agentDir, days, env, blRunner: options.blRunner }));
+			pi.events?.emit(USAGE_SOURCE_EVENT, buildUsageSource({ agentDir, days, env, blRunner: options.blRunner, blCache, now: clock }));
 		} catch {
 			// The command below still works without the hook.
 		}
@@ -112,7 +116,7 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 					// Route B2 always runs: the default transport is the real bl binary
 					// (resolved for Windows shims); options.blRunner only overrides it
 					// for tests. A production activation passes no options at all.
-					fetchBlUsage(env, { runner: options.blRunner }).catch(() => undefined),
+					fetchBlUsage(env, { runner: options.blRunner, cache: blCache, now: clock }).catch(() => undefined),
 				]);
 				message = renderSummary(aggregate(), {
 					agentDir,

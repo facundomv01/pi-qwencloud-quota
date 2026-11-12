@@ -10,28 +10,38 @@ function widthOf(text: string): number {
 	return Array.from(text).reduce((width, char) => width + cellWidth(char), 0);
 }
 
-function wrap(line: string, width: number): string[] {
+function wrap(line: string, width: number, hangIndent = 0): string[] {
 	if (widthOf(line) <= width) return [line];
+	const leading = line.match(/^\s*/u)?.[0] ?? "";
+	const pad = " ".repeat(hangIndent);
+	const words = line.trim().split(/\s+/u).filter(Boolean);
 	const rows: string[] = [];
-	let row = "";
-	for (const word of line.trim().split(/\s+/u)) {
-		if (!word) continue;
-		if (row && widthOf(row) + 1 + widthOf(word) <= width) {
-			row += ` ${word}`;
+	let row = leading; // the first row keeps its own indent
+	for (const word of words) {
+		const sep = row.trim() ? 1 : 0;
+		if (widthOf(row) + sep + widthOf(word) <= width) {
+			row += (sep ? " " : "") + word;
 			continue;
 		}
-		if (row) rows.push(row);
-		row = "";
-		for (const char of word) {
-			if (widthOf(row) + cellWidth(char) > width && row) {
+		if (row.trim()) rows.push(row);
+		row = pad; // every continuation row hangs by the indent
+		for (const ch of word) {
+			if (widthOf(row) + cellWidth(ch) > width && row.trim()) {
 				rows.push(row);
-				row = "";
+				row = pad;
 			}
-			if (cellWidth(char) <= width) row += char;
+			if (cellWidth(ch) <= width) row += ch;
 		}
 	}
-	if (row || !rows.length) rows.push(row);
+	if (row.trim() || !rows.length) rows.push(row);
 	return rows;
+}
+
+function hangIndentOf(line: string): number {
+	// A wrapped row keeps its own leading whitespace plus two cells, so table
+	// continuations stay visually nested instead of starting flush-left.
+	const leading = line.match(/^\s*/u)?.[0].length ?? 0;
+	return leading + 2;
 }
 
 /** A bounded viewport keeps even long local breakdowns navigable. */
@@ -43,7 +53,7 @@ export function createQuotaModal(tui: PiTui, keys: PiKeybindings, done: () => vo
 		render(width: number): string[] {
 			const frameWidth = Math.max(5, width);
 			const inner = frameWidth - 4;
-			lines = summary.split("\n").flatMap((line) => wrap(line, inner));
+			lines = summary.split("\n").flatMap((line) => wrap(line, inner, hangIndentOf(line)));
 			offset = Math.min(offset, Math.max(0, lines.length - pageSize));
 			const frame = (text: string) => `│ ${text}${" ".repeat(Math.max(0, inner - widthOf(text)))} │`;
 			const title = wrap("QwenCloud", inner)[0];
