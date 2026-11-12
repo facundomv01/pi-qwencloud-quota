@@ -1,179 +1,241 @@
+<div align="center">
+
 # pi-qwencloud-quota
 
-A [Pi](https://github.com/earendil-works/pi) package that reports **QwenCloud Token Plan consumption**.
+<a href="https://github.com/Gentleman-Programming/gentle-shell"><img src="https://img.shields.io/badge/Desarrollado_con-gentle--shell-F095C8?style=for-the-badge&labelColor=1A1218" alt="Desarrollado con gentle-shell"></a>
 
-It has two routes. Only the first one ships today:
+**Extensión de [Pi](https://github.com/earendil-works/pi) que muestra el consumo de tu Token Plan de QwenCloud/Alibaba Cloud.**
 
-| Route | Source | Status |
-|---|---|---|
-| **D — local token usage** | Pi's own session JSONL under `~/.gentle-shell/agent/` | **implemented** |
-| **B — remaining Credits** | Alibaba Cloud Model Studio OpenAPI `GetSubscriptionStats` (RAM AccessKey, signed `ACS3-HMAC-SHA256`) | **implemented** — seat-shaped; an Individual plan reports no data |
-| **B2 — Individual-plan windows** | Alibaba's own Bailian CLI (`bailian-cli` / `bl`), console-login gated | **implemented** — the route Individual plans actually report through |
+</div>
 
-## What it does
+---
 
-- Aggregates every assistant turn Pi recorded: fresh `input`, `output`, `cacheRead`, `cacheWrite`, `reasoning` and `totalTokens`, broken down by **day**, **model**, **provider**, **source** (orchestrator vs subagent) and **project**.
-- Attributes each turn by the `provider` field **the turn itself recorded** — never by catalogue membership, because the same model id can exist in several catalogues (`deepseek-v4-flash` is in both `nan` and `qwen-token-plan`). A turn with no provider lands under `unknown`.
-- Reports `cacheRead` as a share of total tokens. On real Token Plan sessions that ratio sits around **96–97%**, which is the single most decision-relevant number: almost all consumption is cached context, not fresh input.
-- Reports the **qwen-token-plan** figure separately from the **all providers** figure, each with its own explicit label. The plan figure is never the aggregate of every provider on disk.
-- Detects quota exhaustion from the provider's own `HTTP 429` + `Retry-After` response — the only quota signal that exists without credentials — and shows `exhausted · resets HH:MM` on the status row and in `/qwen-quota`.
-- Registers itself with gentle-pi's native usage-source hook (`gentle-pi:usage-source/v1`), so the provider appears in the shell's usage panel next to Codex, Claude and NaN. The source is announced **on activation and again on `session_start`**: a `/reload` re-activates the module without replaying `session_start`, and a start-only announce left the old module's closure in charge of the panel.
-- Adds a slash command that opens a navigable modal plus a one-line status segment.
+## Capturas
 
-Route D works with **zero credentials and zero network access**: it reads local files only.
+| Cargando | Overview |
+|---|---|
+| ![cargando](docs/img/loading.svg) | ![overview](docs/img/overview.svg) |
 
-```
-/qwen-quota   →  opens this table in a modal
+| Breakdown |
+|---|
+| ![breakdown](docs/img/breakdown.svg) |
 
-QwenCloud Token Plan · local token usage
-window: 2026-11-07 → 2026-11-11 · 116 sessions · 6165 assistant turns (all providers)
-qwen-token-plan: 1.8M tok · cacheRead 1.6M (87.3%) · fresh input 150.2k · output 42.1k · cacheWrite 1.2k · reasoning 8.4k
-all providers: 917.0M tok · cacheRead 886.8M (96.7%) · local context only, not Qwen quota
-by provider:
-  nan             3401 turns · 620.4M tok · cacheRead 96.9%
-  openai-codex    2100 turns · 294.6M tok · cacheRead 96.2%
-  qwen-token-plan   59 turns · 1.8M tok · cacheRead 87.3%
-...
-Credits: not configured · route B needs ALIBABA_CLOUD_ACCESS_KEY_ID + ALIBABA_CLOUD_ACCESS_KEY_SECRET
-```
+## Qué hace
 
-That block shows the output's shape; the counts are illustrative and abridged with `...`.
+El paquete tiene **tres rutas** independientes. Todas funcionan solas y se combinan sin conflicto:
 
-## Install
+| Ruta | Fuente | Qué muestra | Qué necesita |
+|---|---|---|---|
+| **D — uso local** | Los JSONL de sesión de Pi en `~/.gentle-shell/agent/` | Tokens totales, por día, modelo, proveedor, proyecto y origen (orquestador vs subagente), más el porcentaje de cacheRead | **Nada**: cero credenciales, cero red |
+| **B — Credits restantes** | OpenAPI oficial de Alibaba Model Studio `GetSubscriptionStats` (firmado `ACS3-HMAC-SHA256`) | Créditos restantes del plan, fecha de reset y un gauge real en el panel de gentle-shell | Un **AccessKey RAM** de solo lectura (planes con asientos / Team) |
+| **B2 — ventanas del plan Individual** | La CLI oficial de Alibaba (`bailian-cli`, comando `bl`), con login de consola | Ventanas reales de consumo: **5 horas / semanal / mensual**, con sus resets | Instalar la CLI y loguearse **una vez** (plan Individual, como el Essential) |
+
+Además:
+
+- Detecta el agotamiento de quota por la respuesta del propio proveedor (`HTTP 429` + `Retry-After`) y muestra `exhausted · resets HH:MM` — la única señal que existe sin credenciales.
+- Se registra en el hook nativo de fuentes de uso de gentle-pi (`gentle-pi:usage-source/v1`), así que aparece en el panel de uso del shell junto a Codex, Claude y NaN.
+- Atribuye cada turno al `provider` que el propio registro declara, nunca por pertenencia a un catálogo: el agregado de otros proveedores **jamás** se presenta como consumo de Qwen.
+
+## Instalación
+
+### Opción 1: desde este repositorio (recomendada hoy)
 
 ```bash
-# once published
-pi install npm:pi-qwencloud-quota
-
-# from a local checkout
-pi install ./pi-qwen-usage
-
-# try it for a single run without changing settings
-pi -e ./pi-qwen-usage
+git clone https://github.com/facundomv01/pi-qwencloud-quota.git
+pi install ./pi-qwencloud-quota
 ```
 
-Or add it to a `settings.json` `packages` array:
+### Opción 2: probarla sin cambiar tu configuración
+
+```bash
+pi -e ./pi-qwencloud-quota
+```
+
+### Opción 3: agregarla a tu `settings.json`
 
 ```json
 {
-  "packages": ["npm:pi-qwencloud-quota"]
+  "packages": ["github:facundomv01/pi-qwencloud-quota"]
 }
 ```
 
-The package declares its extension entry through the `pi.extensions` manifest in `package.json` (`./index.ts`), so Pi loads it as a normal package extension.
+El paquete declara su entrada de extensión mediante el manifiesto `pi.extensions` en `package.json` (`./index.ts`), así que Pi lo carga como una extensión normal. No tiene dependencias de runtime: solo `node:crypto`, `node:child_process` y `node:fs`.
 
-## Use
+> **Requisitos**: Node.js ≥ 22.18 (Pi ya lo exige). Para la ruta B2 (planes Individual), la CLI oficial de Bailian (ver más abajo).
 
-- `/qwen-quota` opens a themed, tabbed modal **instantly**: the aggregation and the plan-quota fetches run in the background while a loading state is on screen. The **Overview** tab leads with the Individual-plan quota line (`Individual plan (bl CLI): …` when the CLI reports windows, plus the Credits line when route B is configured) and then the local-session figures with their honest labels; the **Breakdown** tab holds the per-provider / source / model / day / project tables, fully rendered with no scrolling. Switch tabs with `←`/`→` (also `[`/`]` or `a`/`d` — Pi's keybinding registry exposes no left/right select action, so these are direct input matches), close with Escape. Opening it clears any widget left by an older version. Opening it never spawns the bl CLI more often than the shared 60 s cache allows.
-- A short status segment appears after `session_start` and after a detected exhaustion:
-  `qwen 1.8M tok · cacheRead 87.3%`.
-- In gentle-shell the provider shows up in the usage panel and `/gentle:usage` **when the session targets the `qwen-token-plan` provider** (the shell only refreshes providers in the current routing scope). Its compact row shows only Qwen's local tokens and cache-read share, not a quota percentage: `local 7d · 1.8M tok · cache read 87.3% · not quota`. Use `/qwen-quota` for the all-providers total and breakdown.
+## Uso
 
-### Modal navigation
+### El comando `/qwen-quota`
 
-The modal replaces the old persistent widget and avoids the widget's ten-line cap (that cap only applies to `setWidget` arrays; the overlay renders every row of the active tab). It follows the native `/stats` style — bold colored section headers, dim labels, bright key numbers, full available width — using the theme instance Pi already passes to `ui.custom`. Colors are restricted to token names that exist in Pi's `Theme` (`accent`, `success`, `warning`, `error`, `dim`, …); degradation messages (`bl CLI not found …`, `no subscription data …`, query failures) render as status lines, never as fabricated zeros. Switch tabs with `←`/`→`, `[`/`]` or `a`/`d`, and press Escape to close. If the modal cannot open, a short error notification is shown.
+Escribí `/qwen-quota` en Pi. El modal **abre al instante** y muestra un indicador de carga mientras se leen tus sesiones locales y se consulta la quota del plan (con caché compartida de 60 s: las siguientes aperturas son instantáneas). Cuando los datos llegan, la vista se actualiza sola.
 
-### Why two figures
+Dos pestañas, al estilo de `/stats`:
 
-The first version of this package reported the aggregate of *every* local session under the `qwen-token-plan` name. The shell panel then read `qwen-token-plan · local 7d · 917.0M tok` while only ~1.8M tokens had actually gone through the token plan — the rest was `nan`, `openai-codex` and `claude-bridge` traffic. That is a dangerously wrong reading of a Qwen quota, so attribution is now taken from each record's own `provider` field and the two figures are labelled separately everywhere they appear.
+- **Overview**: la línea de quota del plan Individual primero y destacada en color (`Individual plan (bl CLI): monthly 3.2% · resets 2026-12-12`), después la línea de Credits (si configuraste la ruta B) y el bloque de uso local con etiquetas honestas.
+- **Breakdown**: las tablas completas por proveedor / origen / modelo / día / proyecto, con columnas alineadas y sin límite de líneas.
 
-## Configuration
+**Navegación**: `←`/`→` cambian de pestaña (también `[`/`]` o `a`/`d` — el registro de keybindings de Pi no expone acciones izquierda/derecha, por eso son coincidencias directas de teclas), `Esc` cierra.
 
-All configuration is environment-only. Nothing is read from disk except the session files, no credential is ever logged, echoed or persisted, and the AccessKey never travels anywhere except inside the signed `Authorization` header of the one HTTPS call above.
+### Segmento de estado
 
-| Variable | Route | Default | Meaning |
+Después de `session_start` (y tras detectar un agotamiento) aparece en la barra:
+
+```
+qwen 1.8M tok · cacheRead 87.3%
+```
+
+Solo tokens locales del plan Qwen, nunca un porcentaje de una quota que no existe.
+
+### Panel de uso de gentle-shell
+
+El proveedor `qwen-token-plan` aparece en `/gentle:usage` **cuando la sesión usa ese proveedor**. Cuando la ruta B2 reporta ventanas, el panel muestra un gauge real de esas ventanas (5h/semanal/mensual); con la ruta B, un gauge de Credits; sin ninguna configurada, la fila compacta muestra solo el uso local con la etiqueta `not quota`.
+
+## Configuración
+
+Toda la configuración es por variables de entorno. Nada se lee del disco salvo los archivos de sesión, ninguna credencial se loguea, imprime o persiste, y el AccessKey solo viaja dentro del header `Authorization` firmado de la única llamada HTTPS que hace el paquete.
+
+| Variable | Ruta | Default | Significado |
 |---|---|---|---|
-| `PI_QWENCLOUD_AGENT_DIR` | D | `~/.gentle-shell/agent` | Pi agent dir. The aggregator reads `<dir>/sessions/<project-slug>/*.jsonl` (orchestrator) and `<dir>/gentle-agents/sessions/*.jsonl` (subagents). |
-| `PI_QWENCLOUD_QUOTA_DAYS` | D | `7` | Window in local calendar days. `0` aggregates every session file on disk. |
-| `ALIBABA_CLOUD_ACCESS_KEY_ID` | B | — | RAM AccessKey ID. Needs the read-only Token Plan permission (see below). |
-| `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | B | — | Matching RAM AccessKey secret. |
-| `ALIBABA_CLOUD_REGION_ID` | B | `ap-southeast-1` | Model Studio region for the endpoint host. Token Plan is Singapore-only, so keep the default unless Alibaba tells you otherwise. |
-| `PI_QWENCLOUD_BL_BIN` | B2 | `bl` | Path to the Bailian CLI binary. Set it to pin an exact binary instead of trusting `PATH`. |
-| `PI_QWENCLOUD_BL_REGION` | B2 | `ap-southeast-1` | Console gateway region passed to `bl` (`--console-region`). |
-| `PI_QWENCLOUD_BL_SITE` | B2 | `international` | Console site passed to `bl` (`--console-site`): `international` or `domestic`. |
+| `PI_QWENCLOUD_AGENT_DIR` | D | `~/.gentle-shell/agent` | Directorio de agente de Pi. Lee `<dir>/sessions/<slug>/*.jsonl` (orquestador) y `<dir>/gentle-agents/sessions/*.jsonl` (subagentes). |
+| `PI_QWENCLOUD_QUOTA_DAYS` | D | `7` | Ventana en días calendario locales. `0` agrega todos los archivos de sesión del disco. |
+| `ALIBABA_CLOUD_ACCESS_KEY_ID` | B | — | AccessKey ID de RAM (solo lectura). |
+| `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | B | — | Secret correspondiente. |
+| `ALIBABA_CLOUD_REGION_ID` | B | `ap-southeast-1` | Región de Model Studio para el host del endpoint. Token Plan es solo Singapur; dejá el default. |
+| `PI_QWENCLOUD_BL_BIN` | B2 | `bl` | Ruta al binario de la CLI de Bailian. Fijala si no querés confiar en `PATH`. |
+| `PI_QWENCLOUD_BL_REGION` | B2 | `ap-southeast-1` | Región del gateway de consola (`--console-region`). |
+| `PI_QWENCLOUD_BL_SITE` | B2 | `international` | Sitio de consola (`--console-site`): `international` o `domestic`. |
 
-### Route B: what it calls, and what it needs
+## Instructivos paso a paso
 
-The client performs exactly one documented, read-only call — no console scraping, no plan-key reuse:
+### Paso 1 (todos): no hay que hacer nada
+
+La ruta D funciona sin configurar nada. Instalá el paquete, reiniciá Pi (`/reload`), y `/qwen-quota` ya muestra el uso local.
+
+### Paso 2 (plan **Individual** — la mayoría): configurar la ruta B2
+
+El plan Individual (Lite / Essential / Standard / Pro) **no expone quota por API key**: la clave del plan (`sk-sp-…`) es rechazada por todos los endpoints de quota con `BailianGateway.Login.NotLogined`. La vía oficial es la CLI open source de Alibaba:
+
+**1. Instalá la CLI** (requiere Node ≥ 22.12):
+
+```bash
+npm install -g bailian-cli
+bl --version
+```
+
+**2. Logueate en la consola — cuidado con el sitio**: por defecto el login va a la consola de **China**, que no ve tu plan internacional. Para Singapur (la región de Token Plan) usá:
+
+```bash
+bl auth login --console --console-site international
+```
+
+> ⚠️ **Errores comunes en este paso:**
+> - `Error: Use --console-region only with --console --token-stdin.` → normal: en `auth login`, `--console-region` solo se usa con `--token-stdin`. No lo pases.
+> - Si el navegador no vuelve al callback local, usá el flujo sin servidor local: `bl auth login --console --no-browser --console-site international`, abrí la URL que imprime, iniciá sesión y dejá el comando esperando (espera hasta 15 minutos). El `Exit code 130` solo significa que el proceso se cortó antes de tiempo.
+> - La página de login debe decir **"CLI Login successful!"** y estar en el sitio internacional.
+
+**3. Verificá** que la CLI ve tu quota:
+
+```bash
+bl usage token-plan --output json --console-site international
+```
+
+Deberías ver algo como:
+
+```json
+{
+  "per1MonthPercentage": 0.0277,
+  "per1MonthResetTime": 1797091200000,
+  "hasQuotaData": true
+}
+```
+
+**4. Listo.** En Pi corré `/reload` y `/qwen-quota`: la línea `Individual plan (bl CLI): …` muestra tus ventanas reales. El login se guarda en `~/.bailian/` y se reutiliza; si la sesión expira algún día, el modal te lo dice y volvés a correr el comando de login.
+
+Si tu cuenta responde vacío a `bl usage token-plan` (pasa en cuentas solo-mensuales, es el issue #231 de la CLI), el paquete hace el fallback solo: consulta la API de uso personal vía `bl console call` y parsea todas las ventanas. No tenés que hacer nada.
+
+### Paso 3 (plan **Team** o cuentas con asientos): configurar la ruta B
+
+La ruta B hace exactamente una llamada documentada de solo lectura — sin scraping, sin reuso de claves:
 
 ```
-GET https://modelstudio.<region>.aliyuncs.com/tokenplan/subscription/stats
+GET https://modelstudio.<región>.aliyuncs.com/tokenplan/subscription/stats
 x-acs-action: GetSubscriptionStats · x-acs-version: 2026-02-10
-Authorization: ACS3-HMAC-SHA256 … (signed with the RAM AccessKey)
+Authorization: ACS3-HMAC-SHA256 … (firmado con el AccessKey RAM)
 ```
 
-To create the credential:
+**1.** En la consola de Alibaba Cloud, creá un **usuario RAM** con acceso programático y generá su AccessKey.
 
-1. In the Alibaba Cloud console, create a **RAM user** with programmatic access and an AccessKey.
-2. Attach a read-only policy that covers `modelstudio:GetSubscriptionStats` (for example the managed `AliyunTokenPlanReadOnlyAccess`, which includes the subscription-stats and seat-details read actions).
-3. Export the two environment variables above in the shell that launches Pi.
+**2.** Adjuntale una política de solo lectura que cubra `modelstudio:GetSubscriptionStats` (por ejemplo la administrada `AliyunTokenPlanReadOnlyAccess`).
 
-The plan's own API key (`sk-sp-…`) can **never** query quota: the quota endpoints answer it with `BailianGateway.Login.NotLogined`. Only the RAM AccessKey works, and it works because it is a different credential from a different console.
-
-What the summary then shows when the API returns seat data:
-
-```
-Credits: 43740 of 45000 remaining (2.8% used) · resets 2026-12-12
-```
-
-The reset date only appears when every seat group's cycle end agrees; otherwise it says `reset unknown`. Two honest failure modes exist and neither is fatal:
-
-- `Credits: no subscription data returned …` — the API is seat-shaped. An **Individual** (personal) plan reports no seats, so this line means "the official API has nothing for this plan", never "0 remaining".
-- `Credits: query failed (HTTP …)` — network, signature or permission problems degrade into one line and never include the credential or the request material.
-
-When the API reports both the credits and the subscription period, the gentle-shell usage panel also gets a real `credits` usage window (a genuine gauge with `used`/`budget`), not the windowless local-only entry.
-
-### Route B2: Individual plans through the official Bailian CLI
-
-`GetSubscriptionStats` is seat-shaped: an **Individual** (personal) plan reports no seats, and no key-based endpoint exists for it — the plan's own `sk-sp-` key is never accepted by quota endpoints. The sanctioned way to read an Individual plan's quota is Alibaba's own open-source CLI:
+**3.** Exportá las dos variables en el shell que lanza Pi:
 
 ```bash
-npm install -g bailian-cli   # requires Node >= 22.12
-bl auth login --console      # one-time browser OAuth login
-bl usage token-plan --output json   # verify it reports your windows
+# PowerShell (Windows)
+setx ALIBABA_CLOUD_ACCESS_KEY_ID "tu-access-key-id"
+setx ALIBABA_CLOUD_ACCESS_KEY_SECRET "tu-access-key-secret"
+
+# bash
+export ALIBABA_CLOUD_ACCESS_KEY_ID=tu-access-key-id
+export ALIBABA_CLOUD_ACCESS_KEY_SECRET=tu-access-key-secret
 ```
 
-The extension then spawns `bl usage token-plan --output json` with fixed arguments (never a shell, 15 s timeout) and — when the command answers empty, which happens on monthly-only accounts — falls back to `bl console call` against the raw personal-usage API. It parses only the documented `per5Hour*`/`per1Week*`/`per1Month*` percentage and reset fields, renders them as `5-hour` / `weekly` / `monthly` windows in the usage panel, and prints one line in `/qwen-quota`:
+**4.** Reiniciá Pi. `/qwen-quota` muestra `Credits: <restantes> of <total> remaining (<n>% used) · resets <fecha>` y el panel de gentle-shell recibe un gauge real de Credits.
 
-```
-Individual plan (bl CLI): 5-hour 12.0% · resets 14:30 · monthly 2.8% · resets 2026-12-12
-```
+La fecha de reset solo aparece cuando todos los grupos de asientos terminan el ciclo en el mismo momento; si no, dice `reset unknown`. Dos estados honestos que no son errores:
 
-Everything fails soft: no CLI, no login, or an unknown shape degrades into a one-line message and the panel keeps the seat-based/local payloads. The CLI's own auth state on disk is never read, copied, or exposed by this package; when both B and B2 report data, B2's windows (the Individual plan's real gauge) take precedence.
+- `Credits: no subscription data returned …` — la API es de forma "asientos". Un plan **Individual** no reporta asientos: esta línea significa "la API oficial no tiene nada para este plan", nunca "0 restantes".
+- `Credits: query failed (HTTP …)` — problema de red, firma o permisos, degradado a una línea que nunca incluye la credencial.
 
-Scraping the QwenCloud console with browser cookies is deliberately **not** implemented — a hard constraint of the spec, not an oversight.
+## Detección de agotamiento (sin credenciales)
 
-## Quota exhaustion detection (zero credentials)
+El endpoint de inferencia del plan **no devuelve** headers de quota. La única señal real es la respuesta de agotamiento: un `429` con `Retry-After: <segundos>`.
 
-The token-plan inference endpoint returns **no** quota or rate-limit headers, so remaining quota cannot be read from a successful response. The one real signal is the exhaustion response itself: a `429` with `Retry-After: <seconds>`.
+La extensión registra `pi.on("after_provider_response")` y mira exactamente dos cosas: el status y el header `Retry-After`. Ante un `429` de `qwen-token-plan` (o de un proveedor que el hook no puede identificar) guarda tiempo, proveedor y reset **solo en memoria** y muestra `exhausted · resets HH:MM`. El registro desaparece cuando pasa el reset; sin `Retry-After` usable muestra `exhausted · resets unknown` y envejece en una hora.
 
-The extension registers `pi.on("after_provider_response")` and looks at exactly two things: the status and the `Retry-After` header. On a `429` from `qwen-token-plan` (or from a provider the hook cannot identify) it records the time, the provider and the derived reset time **in memory only**, then shows `exhausted · resets HH:MM`. The record disappears once the reset time passes; an exhaustion with no usable `Retry-After` shows `exhausted · resets unknown` and ages out after an hour.
+- Un `Retry-After` ausente, malformado o negativo igual registra el agotamiento. Nunca lanza.
+- Una respuesta que no es 429 jamás toca el estado: una petición sana no puede limpiar un agotamiento real.
+- Un 429 de **otro** proveedor no se registra: el hook dispara para todos, y el rate limit de otro proveedor no dice nada de la quota de Qwen.
+- No se lee ni guarda ninguna credencial, cuerpo de request ni de response. Nada se escribe al disco.
 
-- A missing, malformed or negative `Retry-After` still records the exhaustion, with an unknown reset. It never throws.
-- A non-429 response never touches the recorded state, so a healthy request cannot silently clear a real exhaustion.
-- A 429 from a **different** provider is not recorded: the hook fires for every provider, and another provider's rate limit says nothing about Qwen quota. This mirrors the attribution rule above — the extension never looks up whether a model id also exists in the qwen catalogue.
-- No credential, request body or response body is read or stored. Nothing is written to disk.
+## Reglas de honestidad que cumple este paquete
 
-## Honesty rules this package follows
+- **La atribución viene del registro, no del catálogo.** Un turno es qwen-token-plan solo si su propio campo `provider` lo dice; un campo ausente es `unknown`; un id de modelo compartido no prueba nada.
+- **Nada de porcentajes de una quota que no existe.** Sin presupuesto conocido no se emite ventana: inventar un `usedPercent` pintaría un gauge falso en la barra.
+- **Nada de cifras en USD.** Cada modelo `qwen-token-plan` tiene `cost: {input: 0, output: 0, …}`: cualquier monto en dólares sería inventado.
+- **Solo lectura.** El paquete nunca escribe en el árbol de sesiones.
+- **Fail-safe.** Una línea de sesión malformada se salta, nunca es fatal; un directorio ausente es "sin datos", nunca un error; un handler jamás lanza dentro de la sesión.
+- **Sin scraping.** Leer la consola de QwenCloud con cookies de navegador está deliberadamente **sin implementar**: restricción dura de la especificación, no una omisión.
 
-- **Attribution comes from the record, not from the catalogue.** A turn is qwen-token-plan only when its own `provider` field says so; a missing field is `unknown`; a shared model id proves nothing.
-- **No percentages of a quota that does not exist.** A Token Plan has no server-side quota window, so the usage-source payload claims no allowance: it emits one window-less limit with `limitReached: false` and puts the measured totals in `plan`. An honest `usedPercent` is impossible here, and a fabricated one would paint a fake gauge in the shell bar.
-- **No USD figures.** Every `qwen-token-plan` model carries `cost: {input: 0, output: 0, …}`, so any dollar amount would be invented.
-- **Read-only.** The package never writes to the session tree.
-- **Fail-safe.** A malformed or truncated session line is skipped, never fatal; a missing agent dir is "no data", never an error; a handler never throws into the session.
+## Seguridad
 
-## Develop
+- Las credenciales llegan **solo** por variables de entorno; jamás se loguean, imprimen, guardan ni devuelven. Los tests lo pinnean: ningún mensaje puede contenerlas, ni siquiera cuando un error adversario las lleva dentro.
+- La CLI `bl` se ejecuta con **argv fijo, sin shell** y timeout de 15 s. En Windows se resuelve el shim de npm (`bl.cmd`) al script real (`bailian-cli/dist/bailian.mjs`) y se ejecuta con `node` — sin `shell: true`, sin superficie de inyección.
+- El estado de login de la CLI (`~/.bailian/`) no se lee, copia ni expone: la autenticación es del propio CLI oficial de Alibaba.
+- Firma ACS3-HMAC-SHA256 verificada contra un vector known-answer independiente; la URL siempre es HTTPS pase lo que pase con la región.
 
-Requires Node.js ≥ 22.18 (type stripping is used, so the tests run without a build step).
+## Solución de problemas
+
+| Síntoma | Causa | Qué hacer |
+|---|---|---|
+| `bl CLI not found · install bailian-cli …` | La CLI no está instalada o no está en `PATH` | `npm install -g bailian-cli` |
+| `bl: no quota windows reported (… run "bl auth login --console --console-site …")` | La CLI está instalada pero sin login | Corré el comando de login exacto que te sugiere el mensaje (ya va con tu sitio) |
+| El modal no muestra la línea `Individual plan (bl CLI):` | La CLI no reportó ventanas (sin login o sin datos) | Mirá la línea de estado al final del tab Overview; ejecutá `bl usage token-plan --output json --console-site international` para ver la respuesta cruda |
+| `Credits: no subscription data returned …` | Plan Individual consultado por la ruta B (es esperado) | Configurá la ruta B2; la ruta B es para planes Team |
+| `Credits: query failed (HTTP 403 …)` | AccessKey sin el permiso `modelstudio:GetSubscriptionStats` o firma incorrecta | Revisá la política RAM del usuario |
+| El panel de gentle-shell no muestra el proveedor | La sesión no usa `qwen-token-plan` | El shell solo refresca proveedores del scope de routing actual; usá `/qwen-quota` para el detalle |
+
+## Desarrollo
+
+Requiere Node.js ≥ 22.18 (type stripping: los tests corren sin build).
 
 ```bash
-npm test          # node --test, hermetic fixtures in a temp dir
-npm install       # only needed for the type check
+npm test          # node --test, fixtures herméticos en un dir temporal
+npm install       # solo necesario para el type check
 npm run typecheck
 ```
 
-Tests never read the real `~/.gentle-shell/agent` tree: every fixture lives in a fresh `mkdtemp` directory and is removed afterwards. Route D is verified against the real session shape (`{type:"message", message:{role:"assistant", provider, usage:{…}}}` — a nested record, not a flat one).
+Los tests nunca leen el árbol real de `~/.gentle-shell/agent`: cada fixture vive en un `mkdtemp` fresco y se borra después. La ruta D se verifica contra la forma real de registro de Pi (`{type:"message", message:{role:"assistant", provider, usage:{…}}}` — anidado, no plano).
 
-## License
+## Licencia
 
 MIT.
