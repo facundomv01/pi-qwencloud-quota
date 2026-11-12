@@ -246,3 +246,29 @@ test("resolveBlCommand falls back to the raw bin when no entry is found (surface
 	const fallback = await resolveBlCommand("bl", ["usage"], "win32", async () => undefined);
 	assert.deepEqual(fallback, { cmd: "bl", args: ["usage"] });
 });
+
+// The plan's real quota is the most decision-relevant line: it must sit right
+// after the qwen-token-plan totals, not buried above the Credits line.
+test("the bl line renders near the top of the summary, after the plan totals", async (t) => {
+	const { renderSummary } = await import("../src/summary.ts");
+	const { aggregateSessions } = await import("../src/sessions.ts");
+	const helpers = await import("./helpers.ts");
+	const fixture = helpers.makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	helpers.seedKnownAgent(fixture);
+
+	const aggregate = aggregateSessions({ agentDir: fixture.dir, days: 0 });
+	const lines = renderSummary(aggregate, {
+		agentDir: fixture.dir,
+		days: 0,
+		env: {},
+		bl: { windows: [{ key: "monthly", usedPercent: 2.8, resetAt: null }], source: "usage", message: "bl" },
+	}).split("\n");
+
+	const planIndex = lines.findIndex((line) => line.startsWith("qwen-token-plan: "));
+	const blIndex = lines.findIndex((line) => line.startsWith("Individual plan (bl CLI): "));
+	const allIndex = lines.findIndex((line) => line.startsWith("all providers: "));
+	assert.ok(planIndex >= 0 && blIndex >= 0 && allIndex >= 0);
+	assert.equal(blIndex, planIndex + 1);
+	assert.ok(blIndex < allIndex);
+});

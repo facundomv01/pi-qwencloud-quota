@@ -78,8 +78,11 @@ export function renderSummary(aggregate: Aggregate, options: SummaryOptions): st
 	} else {
 		lines.push(`${USAGE_PROVIDER}: no turns in this window`);
 	}
+	// The plan's real quota belongs beside the plan's measured usage, not
+	// buried at the bottom of a 40-line modal.
 	// Only ever the exhaustion the provider itself reported; nothing is inferred.
 	if (options.exhaustion) lines.push(renderExhaustion(options.exhaustion));
+	if (blLine) lines.push(blLine);
 	lines.push(
 		`all providers: ${formatTokens(totals.totalTokens)} tok · cacheRead ${formatTokens(totals.cacheRead)} (${formatShare(aggregate.cacheReadShare)}) · local context only, not Qwen quota`,
 	);
@@ -90,8 +93,7 @@ export function renderSummary(aggregate: Aggregate, options: SummaryOptions): st
 		...renderBuckets("by day", aggregate.byDay),
 		...renderBuckets("by project", aggregate.byProject),
 	);
-	if (blLine) lines.push(blLine);
-	else if (blHint) lines.push(blHint);
+	if (blHint) lines.push(blHint);
 	lines.push(credits);
 	return lines.join("\n");
 }
