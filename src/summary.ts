@@ -50,11 +50,15 @@ export function renderSummary(aggregate: Aggregate, options: SummaryOptions): st
 	const lines = [SUMMARY_HEADER];
 	const credits = (options.credits ?? readCredits(options.env)).message;
 	const blLine = options.bl ? renderBlLine(options.bl, (options.now ?? Date.now)()) : undefined;
+	// When the CLI reported nothing, its one-line reason IS the signal the user
+	// asked for: exactly what to install or run, shown instead of silence.
+	const blHint = options.bl && options.bl.windows.length === 0 ? options.bl.message : undefined;
 
 	if (aggregate.turns === 0) {
 		const root = options.agentDir.replace(/[\\/]+$/, "");
 		lines.push(`no local session data yet · looked in ${root}/sessions and ${root}/gentle-agents/sessions`);
 		if (blLine) lines.push(blLine);
+		else if (blHint) lines.push(blHint);
 		lines.push(credits);
 		return lines.join("\n");
 	}
@@ -87,6 +91,7 @@ export function renderSummary(aggregate: Aggregate, options: SummaryOptions): st
 		...renderBuckets("by project", aggregate.byProject),
 	);
 	if (blLine) lines.push(blLine);
+	else if (blHint) lines.push(blHint);
 	lines.push(credits);
 	return lines.join("\n");
 }

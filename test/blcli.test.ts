@@ -187,3 +187,25 @@ test("renderSummary omits the bl line when the CLI reported nothing", async (t) 
 	});
 	assert.ok(!text.includes("bl CLI)"));
 });
+
+// The user must be told exactly when and what to do: an unavailable CLI (not
+// installed, or not logged in) renders its actionable one-line message in the
+// modal instead of disappearing silently.
+test("renderSummary shows the bl setup hint when the CLI is unavailable", async (t) => {
+	const { renderSummary } = await import("../src/summary.ts");
+	const { aggregateSessions } = await import("../src/sessions.ts");
+	const helpers = await import("./helpers.ts");
+	const fixture = helpers.makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	helpers.seedKnownAgent(fixture);
+
+	const aggregate = aggregateSessions({ agentDir: fixture.dir, days: 0 });
+	const text = renderSummary(aggregate, {
+		agentDir: fixture.dir,
+		days: 0,
+		env: {},
+		bl: { windows: [], source: "unavailable", message: 'bl CLI not found · install bailian-cli and run "bl auth login --console" once' },
+	});
+
+	assert.match(text, /^bl CLI not found · install bailian-cli/m);
+});
