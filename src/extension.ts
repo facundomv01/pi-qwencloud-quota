@@ -109,9 +109,10 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 				// allowed. Neither ever throws; the `.catch`es keep that explicit.
 				const [credits, bl] = await Promise.all([
 					fetchCredits(env, { fetchFn: options.fetchFn }).catch(() => undefined),
-					options.blRunner
-						? fetchBlUsage(env, { runner: options.blRunner }).catch(() => undefined)
-						: Promise.resolve(undefined),
+					// Route B2 always runs: the default transport is the real bl binary
+					// (resolved for Windows shims); options.blRunner only overrides it
+					// for tests. A production activation passes no options at all.
+					fetchBlUsage(env, { runner: options.blRunner }).catch(() => undefined),
 				]);
 				message = renderSummary(aggregate(), {
 					agentDir,

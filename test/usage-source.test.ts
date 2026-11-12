@@ -7,6 +7,9 @@ import {
 	buildUsageSource,
 } from "../src/usage-source.ts";
 import { KNOWN_NOW, makeAgentFixture, nestedTurn, seedKnownAgent, sessionRecord } from "./helpers.ts";
+// Deterministic bl stub: unavailable, so the credits and route-D payloads stay pinned.
+const BL_STUB = async () => ({ ok: false, code: "ENOENT", stdout: "", stderr: "" });
+
 
 // Encode the validators gentle-pi already applies to a usage source, so the
 // payload is checked against the real acceptance rules without importing
@@ -101,7 +104,7 @@ test("fetch resolves a ProviderUsage carrying raw token counts, never a fabricat
 	const fixture = makeAgentFixture();
 	try {
 		seedKnownAgent(fixture);
-		const payload = buildUsageSource({ agentDir: fixture.dir, days: 7, now: () => KNOWN_NOW });
+		const payload = buildUsageSource({ agentDir: fixture.dir, days: 7, now: () => KNOWN_NOW, blRunner: BL_STUB });
 		const neverFetch = () => {
 			throw new Error("route D must never touch the network");
 		};
@@ -138,6 +141,7 @@ test("emits a credits window from the subscription stats when credentials are co
 		days: 7,
 		now: () => KNOWN_NOW,
 		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "ak", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "sk" },
+		blRunner: BL_STUB,
 	});
 	const usage = await payload.fetch(undefined, (async () => ({
 		ok: true,
@@ -195,7 +199,7 @@ test("the plan counts only qwen-token-plan turns and identifies local usage as n
 		}),
 	]);
 
-	const payload = buildUsageSource({ agentDir: fixture.dir, days: 7, now: () => KNOWN_NOW });
+	const payload = buildUsageSource({ agentDir: fixture.dir, days: 7, now: () => KNOWN_NOW, blRunner: BL_STUB });
 	const usage = await payload.fetch(undefined, (() => {
 		throw new Error("route D must never touch the network");
 	}) as never, KNOWN_NOW);

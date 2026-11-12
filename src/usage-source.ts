@@ -98,12 +98,12 @@ export function buildUsageSource(options: UsageSourceOptions = {}): UsageSourceP
 				// reports nothing does the seat-based credits route (B) get asked —
 				// and with no credentials configured that call stays local.
 				let limits: ProviderUsage["limits"] = [{ name: "local", windows: [], limitReached: false }];
-				if (options.blRunner) {
-					const bl = await fetchBlUsage(options.env ?? {}, { runner: options.blRunner });
-					const windows = blWindows(bl);
-					if (windows.length > 0) {
-						limits = [{ name: "token plan", windows, limitReached: windows.some((w) => w.usedPercent >= 100), scope: "provider" }];
-					}
+				// Route B2 always runs: the default transport is the real bl binary;
+				// options.blRunner only overrides it for tests.
+				const bl = await fetchBlUsage(options.env ?? {}, { runner: options.blRunner });
+				const windows = blWindows(bl);
+				if (windows.length > 0) {
+					limits = [{ name: "token plan", windows, limitReached: windows.some((w) => w.usedPercent >= 100), scope: "provider" }];
 				}
 				if (limits[0].windows.length === 0) {
 					const snapshot = await fetchCredits(options.env ?? {}, { fetchFn, now: () => now });

@@ -3,6 +3,9 @@ import { test } from "node:test";
 import { registerQuotaExtension } from "../src/extension.ts";
 import { USAGE_PROVIDER, USAGE_SOURCE_EVENT, USAGE_SOURCE_SCHEMA } from "../src/usage-source.ts";
 import { KNOWN_NOW, makeAgentFixture, seedKnownAgent } from "./helpers.ts";
+// Deterministic bl stub: unavailable, so the pinned summaries stay exact.
+const BL_STUB = async () => ({ ok: false, code: "ENOENT", stdout: "", stderr: "" });
+
 
 interface FakePi {
 	commands: Map<string, { description: string; handler: (args: string, ctx: unknown) => unknown }>;
@@ -94,7 +97,7 @@ test("registers /qwen-quota and renders the exact summary in a modal",  async (t
 	seedKnownAgent(fixture);
 
 	const fake = fakePi();
-	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW });
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW, blRunner: BL_STUB });
 
 	const command = fake.commands.get("qwen-quota");
 	assert.ok(command, "the /qwen-quota command is registered");
@@ -124,6 +127,7 @@ test("registers /qwen-quota and renders the exact summary in a modal",  async (t
 			"by project:",
 			"  agent 1 1 turn  · 45.1k tok · cacheRead 88.7%",
 			"  demo    2 turns · 32.8k tok · cacheRead 32.7%",
+			'bl CLI not found · install bailian-cli and run "bl auth login --console" once',
 			"Credits: not configured · route B needs ALIBABA_CLOUD_ACCESS_KEY_ID + ALIBABA_CLOUD_ACCESS_KEY_SECRET",
 		],
 	);
@@ -137,6 +141,7 @@ test("renders an empty agent dir in the modal",  async (t) => {
 
 	const fake = fakePi();
 	registerQuotaExtension(fake.pi as never, {
+	blRunner: BL_STUB,
 		days: 7,
 		env: { PI_QWENCLOUD_AGENT_DIR: `${fixture.dir}/missing` },
 		now: () => KNOWN_NOW,
@@ -156,7 +161,7 @@ test("activation emits the usage source without waiting for session_start", asyn
 	seedKnownAgent(fixture);
 
 	const fake = fakePi();
-	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 7, env: {}, now: () => KNOWN_NOW });
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 7, env: {}, now: () => KNOWN_NOW, blRunner: BL_STUB });
 
 	// The mock never fires session_start. A `/reload` re-activates this module
 	// without replaying that event, so activation alone must announce the source;
@@ -194,7 +199,7 @@ test("a failing setWidget never rejects the command handler", async (t) => {
 	seedKnownAgent(fixture);
 
 	const fake = fakePi();
-	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW });
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW, blRunner: BL_STUB });
 	const command = fake.commands.get("qwen-quota");
 	assert.ok(command);
 
@@ -225,7 +230,7 @@ test("session_start re-emits the usage source and sets the compact status", asyn
 	seedKnownAgent(fixture);
 
 	const fake = fakePi();
-	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 7, env: {}, now: () => KNOWN_NOW });
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 7, env: {}, now: () => KNOWN_NOW, blRunner: BL_STUB });
 
 	const onSessionStart = fake.handlers.get("session_start");
 	assert.ok(onSessionStart, "session_start is handled");
@@ -250,6 +255,7 @@ test("degrades silently with no credentials and no session data", async (t) => {
 
 	const fake = fakePi();
 	registerQuotaExtension(fake.pi as never, {
+	blRunner: BL_STUB,
 		days: 7,
 		// The env override is what a real install uses, and the path does not exist.
 		env: { PI_QWENCLOUD_AGENT_DIR: `${fixture.dir}/missing` },
@@ -288,7 +294,7 @@ test("records a provider 429 and surfaces the exhaustion without throwing", asyn
 	seedKnownAgent(fixture);
 
 	const fake = fakePi();
-	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW });
+	registerQuotaExtension(fake.pi as never, { agentDir: fixture.dir, days: 0, env: {}, now: () => KNOWN_NOW, blRunner: BL_STUB });
 
 	const onResponse = fake.handlers.get("after_provider_response");
 	assert.ok(onResponse, "after_provider_response is handled");
@@ -333,6 +339,7 @@ test("the command fetches route B credits through the injected transport", async
 
 	const fake = fakePi();
 	registerQuotaExtension(fake.pi as never, {
+	blRunner: BL_STUB,
 		agentDir: fixture.dir,
 		days: 0,
 		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "ak", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "sk" },
@@ -373,6 +380,7 @@ test("a route B failure keeps the command working with a pending Credits line", 
 
 	const fake = fakePi();
 	registerQuotaExtension(fake.pi as never, {
+	blRunner: BL_STUB,
 		agentDir: fixture.dir,
 		days: 0,
 		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "ak", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "sk" },
