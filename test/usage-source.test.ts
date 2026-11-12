@@ -124,7 +124,48 @@ test("fetch resolves a ProviderUsage carrying raw token counts, never a fabricat
 	}
 });
 
-// The compact panel row belongs to Qwen only; other providers remain in the modal.
+// Route B, once an AccessKey is configured, turns the API's seat figures into
+// one honest monthly window: the gauge only exists when the budget is real.
+test("emits a credits window from the subscription stats when credentials are configured", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const start = KNOWN_NOW - 15 * 24 * 3600 * 1000;
+	const end = start + 30 * 24 * 3600 * 1000;
+	const payload = buildUsageSource({
+		agentDir: fixture.dir,
+		days: 7,
+		now: () => KNOWN_NOW,
+		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "ak", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "sk" },
+	});
+	const usage = await payload.fetch(undefined, (async () => ({
+		ok: true,
+		status: 200,
+		text: async () =>
+			JSON.stringify({
+				Success: true,
+				Data: {
+					SubscriptionStartTime: start,
+					SubscriptionEndTime: end,
+					Items: [
+						{ SeatType: "standard", SeatRefreshTime: end, TotalSeats: 1, AssignedSeats: 1, SeatCredits: 45000, SeatRemainingCredits: 43740 },
+					],
+				},
+			}),
+	})) as unknown as typeof fetch, KNOWN_NOW);
+
+	assert.ok(usage);
+	assert.equal(usage.limits.length, 1);
+	assert.equal(usage.limits[0].name, "credits");
+	assert.equal(usage.limits[0].limitReached, false);
+	assert.deepEqual(usage.limits[0].windows, [
+		{ label: "monthly", usedPercent: 2.8, windowSeconds: 30 * 24 * 3600, resetAt: end, used: 1260, budget: 45000 },
+	]);
+});
+
+// Without credentials the payload must stay exactly what route D shipped:
+// no fetch, no window, no fabricated gauge.
 test("the plan counts only qwen-token-plan turns and identifies local usage as not quota", async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());

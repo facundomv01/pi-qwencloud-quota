@@ -130,7 +130,25 @@ test("renders no data instead of throwing on an empty agent dir", (t) => {
 	assert.equal(renderStatusWidget(aggregate), undefined);
 });
 
-test("reports route B as configured-but-unimplemented without echoing secrets", (t) => {	const fixture = makeAgentFixture();
+test("renders a fetched route B snapshot instead of the pending line", (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const aggregate = aggregateSessions({ agentDir: fixture.dir, days: 0 });
+	const text = renderSummary(aggregate, {
+		agentDir: fixture.dir,
+		days: 0,
+		env: {},
+		credits: { configured: true, message: "Credits: 43740 of 45000 remaining (2.8% used)" },
+	});
+
+	assert.match(text, /Credits: 43740 of 45000 remaining \(2\.8% used\)/);
+});
+
+// Route B is implemented now: credentials present but unfetched is a pending
+// state, not a permanent "not implemented". No credential value may appear.
+test("reports route B as configured-but-unfetched without echoing secrets", (t) => {	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 	seedKnownAgent(fixture);
 
@@ -141,7 +159,8 @@ test("reports route B as configured-but-unimplemented without echoing secrets", 
 		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "AKIA-not-a-secret", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "super-secret-value" },
 	});
 
-	assert.match(text, /Credits: route B recognised the credentials but is not implemented yet/);
+	assert.match(text, /Credits: .*pending/);
+	assert.match(text, /route B/);
 	assert.ok(!text.includes("super-secret-value"));
 	assert.ok(!text.includes("AKIA-not-a-secret"));
 });

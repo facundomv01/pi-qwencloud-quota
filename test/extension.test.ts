@@ -323,3 +323,68 @@ test("records a provider 429 and surfaces the exhaustion without throwing", asyn
 	// A malformed event is tolerated, never rejected into the session.
 	await assert.doesNotReject(async () => onResponse(undefined, { ui: fake.ui }));
 });
+
+// Route B wired into the command: with credentials and an injected transport,
+// the modal must show the fetched Credits figure, not the pending line.
+test("the command fetches route B credits through the injected transport", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const fake = fakePi();
+	registerQuotaExtension(fake.pi as never, {
+		agentDir: fixture.dir,
+		days: 0,
+		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "ak", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "sk" },
+		now: () => KNOWN_NOW,
+		fetchFn: (async () => ({
+			ok: true,
+			status: 200,
+			text: async () =>
+				JSON.stringify({
+					Success: true,
+					Data: {
+						SubscriptionStartTime: KNOWN_NOW - 15 * 24 * 3600 * 1000,
+						SubscriptionEndTime: KNOWN_NOW + 15 * 24 * 3600 * 1000,
+						Items: [
+							{ SeatType: "standard", SeatRefreshTime: KNOWN_NOW + 15 * 24 * 3600 * 1000, TotalSeats: 1, AssignedSeats: 1, SeatCredits: 45000, SeatRemainingCredits: 43740 },
+						],
+					},
+				}),
+		})) as unknown as typeof fetch,
+	});
+
+	const command = fake.commands.get("qwen-quota");
+	assert.ok(command);
+	await command.handler("", fake.ctx);
+	assert.ok(fake.ui.modalLines.some((line) => line.startsWith("Credits: 43740 of 45000 remaining")));
+	// No credential value may ever reach a rendered surface.
+	for (const line of fake.ui.modalLines) {
+		assert.ok(!line.includes("sk"), "the secret must never be rendered");
+		assert.ok(!/\bak\b/.test(line), "the AccessKey id must never be rendered");
+	}
+});
+
+// A route B failure must degrade into the pending line, never break the command.
+test("a route B failure keeps the command working with a pending Credits line", async (t) => {
+	const fixture = makeAgentFixture();
+	t.after(() => fixture.cleanup());
+	seedKnownAgent(fixture);
+
+	const fake = fakePi();
+	registerQuotaExtension(fake.pi as never, {
+		agentDir: fixture.dir,
+		days: 0,
+		env: { ALIBABA_CLOUD_ACCESS_KEY_ID: "ak", ALIBABA_CLOUD_ACCESS_KEY_SECRET: "sk" },
+		now: () => KNOWN_NOW,
+		fetchFn: (async () => {
+			throw new Error("boom");
+		}) as unknown as typeof fetch,
+	});
+
+	const command = fake.commands.get("qwen-quota");
+	assert.ok(command);
+	await command.handler("", fake.ctx);
+	assert.ok(fake.ui.modalLines.some((line) => line.startsWith("Credits: ")));
+	assert.ok(!fake.ui.modalLines.some((line) => line.includes("boom")));
+});

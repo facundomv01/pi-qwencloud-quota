@@ -7,7 +7,7 @@ It has two routes. Only the first one ships today:
 | Route | Source | Status |
 |---|---|---|
 | **D — local token usage** | Pi's own session JSONL under `~/.gentle-shell/agent/` | **implemented** |
-| **B — remaining Credits** | Alibaba Cloud `BssOpenAPI` `GetSubscriptionStats` (RAM AccessKey) | **not implemented yet** — see the seam in [`src/credits.ts`](src/credits.ts) |
+| **B — remaining Credits** | Alibaba Cloud Model Studio OpenAPI `GetSubscriptionStats` (RAM AccessKey, signed `ACS3-HMAC-SHA256`) | **implemented** |
 
 ## What it does
 
@@ -78,23 +78,46 @@ The first version of this package reported the aggregate of *every* local sessio
 
 ## Configuration
 
-All configuration is environment-only. Nothing is read from disk except the session files, and no credential is ever logged, echoed or persisted.
+All configuration is environment-only. Nothing is read from disk except the session files, no credential is ever logged, echoed or persisted, and the AccessKey never travels anywhere except inside the signed `Authorization` header of the one HTTPS call above.
 
 | Variable | Route | Default | Meaning |
 |---|---|---|---|
 | `PI_QWENCLOUD_AGENT_DIR` | D | `~/.gentle-shell/agent` | Pi agent dir. The aggregator reads `<dir>/sessions/<project-slug>/*.jsonl` (orchestrator) and `<dir>/gentle-agents/sessions/*.jsonl` (subagents). |
 | `PI_QWENCLOUD_QUOTA_DAYS` | D | `7` | Window in local calendar days. `0` aggregates every session file on disk. |
-| `ALIBABA_CLOUD_ACCESS_KEY_ID` | B | — | RAM AccessKey ID with read-only BSS permission. **Not used yet.** |
-| `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | B | — | Matching RAM AccessKey secret. **Not used yet.** |
-| `ALIBABA_CLOUD_REGION_ID` | B | `ap-southeast-1` | BSS OpenAPI region. **Not used yet.** |
+| `ALIBABA_CLOUD_ACCESS_KEY_ID` | B | — | RAM AccessKey ID. Needs the read-only Token Plan permission (see below). |
+| `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | B | — | Matching RAM AccessKey secret. |
+| `ALIBABA_CLOUD_REGION_ID` | B | `ap-southeast-1` | Model Studio region for the endpoint host. Token Plan is Singapore-only, so keep the default unless Alibaba tells you otherwise. |
 
-### Why route B is not implemented yet
+### Route B: what it calls, and what it needs
 
-Credits are not reported by the Token Plan API key Pi already holds: that endpoint exposes no quota headers at all. `GetSubscriptionStats` needs a **separate RAM AccessKey** created in the Alibaba Cloud console. This package therefore ships the seam (`src/credits.ts`) and reports `Credits: not configured` until that unit lands. When credentials are present it says so without echoing them:
+The client performs exactly one documented, read-only call — no console scraping, no plan-key reuse:
 
 ```
-Credits: route B recognised the credentials but is not implemented yet
+GET https://modelstudio.<region>.aliyuncs.com/tokenplan/subscription/stats
+x-acs-action: GetSubscriptionStats · x-acs-version: 2026-02-10
+Authorization: ACS3-HMAC-SHA256 … (signed with the RAM AccessKey)
 ```
+
+To create the credential:
+
+1. In the Alibaba Cloud console, create a **RAM user** with programmatic access and an AccessKey.
+2. Attach a read-only policy that covers `modelstudio:GetSubscriptionStats` (for example the managed `AliyunTokenPlanReadOnlyAccess`, which includes the subscription-stats and seat-details read actions).
+3. Export the two environment variables above in the shell that launches Pi.
+
+The plan's own API key (`sk-sp-…`) can **never** query quota: the quota endpoints answer it with `BailianGateway.Login.NotLogined`. Only the RAM AccessKey works, and it works because it is a different credential from a different console.
+
+What the summary then shows when the API returns seat data:
+
+```
+Credits: 43740 of 45000 remaining (2.8% used) · resets 2026-12-12
+```
+
+The reset date only appears when every seat group's cycle end agrees; otherwise it says `reset unknown`. Two honest failure modes exist and neither is fatal:
+
+- `Credits: no subscription data returned …` — the API is seat-shaped. An **Individual** (personal) plan reports no seats, so this line means "the official API has nothing for this plan", never "0 remaining".
+- `Credits: query failed (HTTP …)` — network, signature or permission problems degrade into one line and never include the credential or the request material.
+
+When the API reports both the credits and the subscription period, the gentle-shell usage panel also gets a real `credits` usage window (a genuine gauge with `used`/`budget`), not the windowless local-only entry.
 
 Scraping the QwenCloud console with browser cookies is deliberately **not** implemented — a hard constraint of the spec, not an oversight.
 

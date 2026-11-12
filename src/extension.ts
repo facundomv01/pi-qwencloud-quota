@@ -1,6 +1,7 @@
 import { aggregateSessions, resolveAgentDir, resolveDays } from "./sessions.ts";
 import type { Aggregate } from "./sessions.ts";
 import { createExhaustionTracker } from "./exhaustion.ts";
+import { fetchCredits } from "./credits.ts";
 import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
 import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
 import { USAGE_SOURCE_EVENT, buildUsageSource } from "./usage-source.ts";
@@ -27,6 +28,8 @@ export interface QuotaOptions {
 	days?: number;
 	env?: Record<string, string | undefined>;
 	now?: () => number;
+	/** Injectable transport for route B, so tests never touch the network. */
+	fetchFn?: typeof fetch;
 }
 
 // Wires the three surfaces this package owns: the usage-source event gentle-shell
@@ -98,7 +101,16 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 		handler: async (_args: string, ctx: PiActionContext) => {
 			let message: string;
 			try {
-				message = renderSummary(aggregate(), { agentDir, days, env, exhaustion: exhaustion.current() });
+				// Route B runs here, where an await is allowed: fetchCredits never
+				// throws, and the `.catch` keeps that guarantee explicit.
+				const credits = await fetchCredits(env, { fetchFn: options.fetchFn }).catch(() => undefined);
+				message = renderSummary(aggregate(), {
+					agentDir,
+					days,
+					env,
+					exhaustion: exhaustion.current(),
+					credits,
+				});
 			} catch (error) {
 				message = `qwen-quota: could not read local sessions (${error instanceof Error ? error.message : "unknown error"})`;
 			}

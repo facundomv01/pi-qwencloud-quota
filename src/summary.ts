@@ -1,4 +1,5 @@
 import { readCredits } from "./credits.ts";
+import type { CreditsStatus } from "./credits.ts";
 import type { ExhaustionRecord } from "./exhaustion.ts";
 import { formatClock, formatShare, formatTokens, plural } from "./format.ts";
 import { providerBucket } from "./sessions.ts";
@@ -14,6 +15,8 @@ export interface SummaryOptions {
 	env: Record<string, string | undefined>;
 	/** Recorded quota exhaustion, when one has been seen and has not aged out. */
 	exhaustion?: ExhaustionRecord;
+	/** A pre-fetched route B snapshot; when absent, the sync not-configured/pending line is used. */
+	credits?: CreditsStatus;
 }
 
 /** `exhausted · resets HH:MM`, or an explicit unknown when Retry-After gave nothing usable. */
@@ -26,7 +29,7 @@ export function renderExhaustion(record: ExhaustionRecord): string {
 // for every qwen-token-plan model is zero (S10).
 export function renderSummary(aggregate: Aggregate, options: SummaryOptions): string {
 	const lines = [SUMMARY_HEADER];
-	const credits = readCredits(options.env).message;
+	const credits = (options.credits ?? readCredits(options.env)).message;
 
 	if (aggregate.turns === 0) {
 		const root = options.agentDir.replace(/[\\/]+$/, "");
