@@ -26,12 +26,12 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/facun/pi-qwencloud-quota.git"
+		"url": "git+https://github.com/facundomv01/pi-qwencloud-quota.git"
 	},
 	"bugs": {
-		"url": "https://github.com/facun/pi-qwencloud-quota/issues"
+		"url": "https://github.com/facundomv01/pi-qwencloud-quota/issues"
 	},
-	"homepage": "https://github.com/facun/pi-qwencloud-quota#readme",
+	"homepage": "https://github.com/facundomv01/pi-qwencloud-quota#readme",
 	"pi": {
 		"extensions": [
 			"./index.ts"
