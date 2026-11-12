@@ -135,7 +135,10 @@ function toSvg(name, ansi) {
 ${body}</svg>\n`;
 }
 
+import { existsSync } from "node:fs";
 for (const name of ["loading", "overview", "breakdown"]) {
-	writeFileSync(`docs/img/${name}.svg`, toSvg(name, readFileSync(`docs/img/${name}.ansi`, "utf8")));
+	const ansi = `docs/img/${name}.ansi`;
+	if (!existsSync(ansi)) continue; // convert only freshly captured views
+	writeFileSync(`docs/img/${name}.svg`, toSvg(name, readFileSync(ansi, "utf8")));
 }
 console.log("vector-frame svgs written");
