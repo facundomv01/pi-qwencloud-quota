@@ -39,12 +39,29 @@ export interface PiTui {
 	requestRender(): void;
 }
 
+/** Foreground color tokens, verified against `pi-coding-agent/dist/modes/interactive/theme/theme-tokens.d.ts` (THEME_TOKENS, foreground slot). Inventing a name outside this list is a defect. */
+export type PiThemeColor =
+	| "accent"
+	| "borderAccent"
+	| "success"
+	| "warning"
+	| "error"
+	| "muted"
+	| "dim"
+	| "text";
+
+/** Structural slice of Pi's real `Theme` (same file, class Theme): `fg(color, text)` and `bold(text)`. */
+export interface PiTheme {
+	fg(color: PiThemeColor, text: string): string;
+	bold(text: string): string;
+}
+
 export interface PiKeybindings {
 	matches(data: string, action: "tui.select.cancel" | "tui.select.up" | "tui.select.down"): boolean;
 }
 
 export interface PiUi {
-	custom<T>(factory: (tui: PiTui, theme: unknown, keybindings: PiKeybindings, done: (result: T) => void) => { render(width: number): string[]; handleInput(data: string): void; invalidate(): void }, options: { overlay: true }): Promise<T>;
+	custom<T>(factory: (tui: PiTui, theme: PiTheme, keybindings: PiKeybindings, done: (result: T) => void) => { render(width: number): string[]; handleInput(data: string): void; invalidate(): void }, options: { overlay: true }): Promise<T>;
 	setStatus(id: string, text: string | undefined): void;
 	/** Persistent panel content; `undefined` clears it. Mirrors `setWidget` in `pi-coding-agent/dist/core/extensions/types.d.ts:112`. */
 	setWidget(key: string, content: string[] | undefined, options?: unknown): void;

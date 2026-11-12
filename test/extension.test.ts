@@ -27,6 +27,13 @@ interface FakePi {
 	ctx: unknown;
 }
 
+// S12: the modal now opens instantly and loads its data asynchronously, with a
+// themed loading state. The fake ui passes a pass-through theme, waits for the
+// loader to settle, then collects the content rows of BOTH tabs (Overview and
+// Breakdown) after stripping ANSI codes.
+const ANSI = /\x1b\[[0-9;]*m/gu;
+const visible = (line: string) => line.replace(ANSI, "");
+
 function fakePi(): FakePi {
 	const commands = new Map<string, { description: string; handler: (args: string, ctx: unknown) => unknown }>();
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
@@ -40,16 +47,30 @@ function fakePi(): FakePi {
 		modalLines,
 		async custom(factory: Function, options: unknown) {
 			assert.deepEqual(options, { overlay: true });
-			const modal = factory({ requestRender() {} }, {}, { matches: (data: string, action: string) => data === action }, () => {});
-			for (let i = 0; i < 100; i++) {
+			const modal = factory(
+				{ requestRender() {} },
+				{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
+				{ matches: (data: string, action: string) => data === action },
+				() => {},
+			);
+			// The modal opens before its data; wait until the loading state clears.
+			for (let i = 0; i < 200; i++) {
+				if (!modal.render(300).map(visible).join("\n").includes("Loading")) break;
+				await new Promise((resolve) => setTimeout(resolve, 1));
+			}
+			const collect = () => {
 				for (const line of modal.render(300)) {
 					if (!line.startsWith("│ ")) continue;
-					const content = line.slice(2, -2).trimEnd();
-					if (content === "QwenCloud" || content.startsWith("↑/↓")) continue;
+					const content = visible(line.slice(2).replace(/\s*│$/u, "")).replace(/\s+$/u, "");
+					const trimmed = content.trim();
+					if (!trimmed) continue;
+					if (trimmed.startsWith("Overview") || trimmed.startsWith("←/→")) continue;
 					if (!modalLines.includes(content)) modalLines.push(content);
 				}
-				modal.handleInput("tui.select.down");
-			}
+			};
+			collect(); // Overview tab
+			modal.handleInput("\x1b[C"); // switch to Breakdown
+			collect();
 		},
 		statuses,
 		notifications,
@@ -91,7 +112,7 @@ function fakePi(): FakePi {
 	};
 }
 
-test("registers /qwen-quota and renders the exact summary in a modal",  async (t) => {
+test("registers /qwen-quota and renders the themed tabbed summary in a modal",  async (t) => {
 	const fixture = makeAgentFixture();
 	t.after(() => fixture.cleanup());
 	seedKnownAgent(fixture);
@@ -106,29 +127,35 @@ test("registers /qwen-quota and renders the exact summary in a modal",  async (t
 	await command.handler("", fake.ctx);
 
 	assert.deepEqual(fake.ui.widgets, [{ id: "qwen-quota", content: undefined }]);
+	// Deliberate S12 redesign of the modal surface: the plan quota lines (bl,
+	// Credits) now lead the Overview tab, the local-usage block follows, and the
+	// per-dimension tables moved to the Breakdown tab. renderSummary (the widget
+	// surface) is unchanged and stays pinned by test/summary.test.ts.
 	assert.deepEqual(
-		fake.ui.modalLines.filter((line) => !line.startsWith("──") && !line.startsWith("↑/↓")),
+		fake.ui.modalLines,
 		[
-			"QwenCloud Token Plan · local token usage",
+			// Overview tab: plan quota first, prominently.
+			'bl CLI not found · install bailian-cli and run "bl auth login --console" once',
+			"Credits: not configured · route B needs ALIBABA_CLOUD_ACCESS_KEY_ID + ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+			"Local session usage",
 			"window: 2026-11-08 → 2026-11-09 · 2 sessions · 3 assistant turns (all providers)",
 			"qwen-token-plan: 77.9k tok · cacheRead 50.7k (65.1%) · fresh input 26.8k · output 393 · cacheWrite 10 · reasoning 29",
 			"all providers: 77.9k tok · cacheRead 50.7k (65.1%) · local context only, not Qwen quota",
-			"by provider:",
+			// Breakdown tab.
+			"By provider",
 			"  qwen-token-plan 3 turns · 77.9k tok · cacheRead 65.1%",
-			"by source:",
+			"By source",
 			"  subagent     1 turn  · 45.1k tok · cacheRead 88.7%",
 			"  orchestrator 2 turns · 32.8k tok · cacheRead 32.7%",
-			"by model:",
+			"By model",
 			"  deepseek-v4-flash 2 turns · 76.2k tok · cacheRead 65.9%",
 			"  glm5.3-flash      1 turn  · 1.7k tok · cacheRead 29.2%",
-			"by day:",
+			"By day",
 			"  2026-11-08 1 turn  · 45.1k tok · cacheRead 88.7%",
 			"  2026-11-09 2 turns · 32.8k tok · cacheRead 32.7%",
-			"by project:",
+			"By project",
 			"  agent 1 1 turn  · 45.1k tok · cacheRead 88.7%",
 			"  demo    2 turns · 32.8k tok · cacheRead 32.7%",
-			'bl CLI not found · install bailian-cli and run "bl auth login --console" once',
-			"Credits: not configured · route B needs ALIBABA_CLOUD_ACCESS_KEY_ID + ALIBABA_CLOUD_ACCESS_KEY_SECRET",
 		],
 	);
 

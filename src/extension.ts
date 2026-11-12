@@ -9,6 +9,7 @@ import { STATUS_ID, renderStatusWidget, renderSummary } from "./summary.ts";
 import type { PiApi, PiProviderResponseEvent, PiUi, PiActionContext } from "./types.ts";
 import { USAGE_SOURCE_EVENT, buildUsageSource } from "./usage-source.ts";
 import { createQuotaModal } from "./quota-modal.ts";
+import type { QuotaModalData } from "./quota-modal.ts";
 
 // A host-provided ui is only trusted when it actually carries the one method used
 // at activation time; anything else is treated as "no ui reachable".
@@ -107,8 +108,18 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 	pi.registerCommand(COMMAND_NAME, {
 		description: COMMAND_DESCRIPTION,
 		handler: async (_args: string, ctx: PiActionContext) => {
-			let message: string;
 			try {
+				ctx.ui.setWidget(QUOTA_WIDGET_ID, undefined);
+			} catch {
+				// A stale widget must not prevent opening the modal.
+			}
+
+			// S12: the modal opens INSTANTLY. The aggregation and the bl/credits
+			// fetches run in the loader below, after the component is on screen; the
+			// user sees a themed loading state until they land. The loader runs once
+			// per open, so tab switches never re-trigger it, and the shared blCache
+			// keeps the spawn rate at one per TTL whichever surface asks first.
+			const loadQuotaData = async (): Promise<QuotaModalData> => {
 				// Route B (AccessKey) and B2 (bl CLI) run here, where an await is
 				// allowed. Neither ever throws; the `.catch`es keep that explicit.
 				const [credits, bl] = await Promise.all([
@@ -118,25 +129,26 @@ export function registerQuotaExtension(pi: PiApi, options: QuotaOptions = {}): v
 					// for tests. A production activation passes no options at all.
 					fetchBlUsage(env, { runner: options.blRunner, cache: blCache, now: clock }).catch(() => undefined),
 				]);
-				message = renderSummary(aggregate(), {
-					agentDir,
-					days,
-					env,
-					exhaustion: exhaustion.current(),
-					credits,
-					bl,
-				});
-			} catch (error) {
-				message = `qwen-quota: could not read local sessions (${error instanceof Error ? error.message : "unknown error"})`;
-			}
+				const data: QuotaModalData = {
+					aggregate: aggregate(),
+					summary: {
+						agentDir,
+						days,
+						env,
+						exhaustion: exhaustion.current(),
+						credits,
+						bl,
+						now: clock,
+					},
+				};
+				return data;
+			};
 
 			try {
-				ctx.ui.setWidget(QUOTA_WIDGET_ID, undefined);
-			} catch {
-				// A stale widget must not prevent opening the modal.
-			}
-			try {
-				await ctx.ui.custom<void>((tui, _theme, keys, done) => createQuotaModal(tui, keys, () => done(), message), { overlay: true });
+				await ctx.ui.custom<void>(
+					(tui, theme, keys, done) => createQuotaModal(tui, theme, keys, () => done(), loadQuotaData),
+					{ overlay: true },
+				);
 			} catch {
 				try { ctx.ui.notify("qwen-quota: could not open the quota modal", "error"); } catch { /* best effort */ }
 			}

@@ -64,14 +64,14 @@ The package declares its extension entry through the `pi.extensions` manifest in
 
 ## Use
 
-- `/qwen-quota` opens the full local-token summary for the configured window, including the per-provider breakdown sorted by tokens. Use ↑/↓ to scroll and Escape to close. Opening it clears any widget left by an older version.
+- `/qwen-quota` opens a themed, tabbed modal **instantly**: the aggregation and the plan-quota fetches run in the background while a loading state is on screen. The **Overview** tab leads with the Individual-plan quota line (`Individual plan (bl CLI): …` when the CLI reports windows, plus the Credits line when route B is configured) and then the local-session figures with their honest labels; the **Breakdown** tab holds the per-provider / source / model / day / project tables, fully rendered with no scrolling. Switch tabs with `←`/`→` (also `[`/`]` or `a`/`d` — Pi's keybinding registry exposes no left/right select action, so these are direct input matches), close with Escape. Opening it clears any widget left by an older version. Opening it never spawns the bl CLI more often than the shared 60 s cache allows.
 - A short status segment appears after `session_start` and after a detected exhaustion:
   `qwen 1.8M tok · cacheRead 87.3%`.
 - In gentle-shell the provider shows up in the usage panel and `/gentle:usage` **when the session targets the `qwen-token-plan` provider** (the shell only refreshes providers in the current routing scope). Its compact row shows only Qwen's local tokens and cache-read share, not a quota percentage: `local 7d · 1.8M tok · cache read 87.3% · not quota`. Use `/qwen-quota` for the all-providers total and breakdown.
 
 ### Modal navigation
 
-The modal replaces the old persistent widget and avoids the widget's ten-line cap. Scroll with ↑/↓ to reach the remaining breakdowns and Credits note, and press Escape to close it. If the modal cannot open, a short error notification is shown.
+The modal replaces the old persistent widget and avoids the widget's ten-line cap (that cap only applies to `setWidget` arrays; the overlay renders every row of the active tab). It follows the native `/stats` style — bold colored section headers, dim labels, bright key numbers, full available width — using the theme instance Pi already passes to `ui.custom`. Colors are restricted to token names that exist in Pi's `Theme` (`accent`, `success`, `warning`, `error`, `dim`, …); degradation messages (`bl CLI not found …`, `no subscription data …`, query failures) render as status lines, never as fabricated zeros. Switch tabs with `←`/`→`, `[`/`]` or `a`/`d`, and press Escape to close. If the modal cannot open, a short error notification is shown.
 
 ### Why two figures
 
