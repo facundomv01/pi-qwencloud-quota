@@ -212,13 +212,16 @@ test("renderSummary shows the bl setup hint when the CLI is unavailable", async 
 
 // The bare login defaults to the China console; an international user (like
 // this package's Singapore default) must be told the site-aware command.
-test("the not-logged-in hint names the international site and region when applicable", async () => {
+// --console-region is NOT usable here: `bl auth login` rejects it unless
+// --token-stdin is also passed (measured on bailian-cli 2.9.0), so the hint
+// must suggest only the site.
+test("the not-logged-in hint names the site but never the rejected region", async () => {
 	const { runner } = scriptedRunner([AUTH_FAIL, AUTH_FAIL]);
 	const usage = await fetchBlUsage(ENV, { runner });
-	assert.match(usage.message, /bl auth login --console --console-site international --console-region ap-southeast-1/);
+	assert.match(usage.message, /bl auth login --console --console-site international(?! --console-region)/);
 
 	const domestic = await fetchBlUsage({ [BL_SITE_ENV]: "domestic" }, { runner: scriptedRunner([AUTH_FAIL, AUTH_FAIL]).runner });
-	assert.match(domestic.message, /bl auth login --console --console-site domestic --console-region ap-southeast-1/);
+	assert.match(domestic.message, /bl auth login --console --console-site domestic(?! --console-region)/);
 });
 
 // Windows: npm installs `bl` as a .cmd shim that execFile cannot spawn

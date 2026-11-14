@@ -223,8 +223,10 @@ export async function fetchBlUsage(env: Record<string, string | undefined>, deps
 	}
 	const usageCommand = await resolveBlCommand(bin, ["usage", "token-plan", "--output", "json", "--console-region", region, "--console-site", site], process.platform, deps.lookup);
 	// The bare login goes to the China console; an international user following
-	// that hint would land on a site that cannot even see their plan.
-	const loginHint = `bl auth login --console --console-site ${site} --console-region ${region}`;
+	// that hint would land on a site that cannot even see their plan. The region
+	// is deliberately absent: `bl auth login` rejects --console-region unless
+	// --token-stdin is also passed (bailian-cli 2.9.0).
+	const loginHint = `bl auth login --console --console-site ${site}`;
 
 	let first: BlRunnerResult;
 	try {
